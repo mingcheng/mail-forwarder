@@ -1,0 +1,29 @@
+# General Settings
+forward_to = "destination@example.com"
+check_interval_seconds = 60
+
+# Receiver Settings (POP3)
+[[receivers]]
+host = "pop.gmail.com"
+port = 995
+username = "your_email@gmail.com"
+password = "your_password"
+use_tls = true
+check_interval_seconds = 30       # specific interval for this account
+# proxy = "127.0.0.1:1080" # Optional SOCKS5 proxy
+delete_after_forward = true # Optional: delete email after successful forward
+
+[[receivers]]
+host = "pop.sina.com"
+port = 995
+username = "another@sina.com"
+password = "password"
+use_tls = true
+# no interval set, uses default 60s
+
+# Sender Settings (SMTP)
+[sender]
+host = "smtp.gmail.com"
+port = 587
+username = "your_email@gmail.com"
+password = "your_password"
