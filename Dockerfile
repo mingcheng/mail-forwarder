@@ -40,10 +40,6 @@ RUN cargo build --release && \
 # Stage 3: Runtime - Create minimal runtime image
 FROM alpine AS runtime
 
-# Set timezone (configurable via build args)
-ARG TZ=Asia/Shanghai
-ENV TZ=${TZ}
-
 # Install only runtime dependencies
 RUN apk add --no-cache \
     tzdata \
@@ -57,19 +53,6 @@ RUN apk add --no-cache \
 
 # Copy the compiled binary from builder stage
 COPY --from=builder /bin/mail-forwarder /bin/mail-forwarder
-
-# Create a non-root user for security
-RUN addgroup -g 1000 mailer && \
-    adduser -D -u 1000 -G mailer mailer
-
-# Set the working directory
-WORKDIR /repo
-
-# Change ownership of the working directory
-RUN chown -R mailer:mailer /repo
-
-# Switch to non-root user
-USER mailer
 
 # Define the entrypoint
 ENTRYPOINT ["/bin/mail-forwarder"]
