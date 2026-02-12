@@ -1,6 +1,6 @@
 [package]
 name = "mail-forwarder"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
@@ -23,6 +23,7 @@ socks = "0.3" # For blocking proxy (POP3)
 pop3 = { package = "rust-pop3-client", version = "0.3.0" }
 clap = { version = "4.5.57", features = ["derive"] }
 rustls = "0.23.36"
+chrono = "0.4.43"
 
 [dev-dependencies]
 mockall = "0.14.0"

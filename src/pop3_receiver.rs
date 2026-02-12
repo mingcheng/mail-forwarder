@@ -18,19 +18,27 @@ struct RealPop3Client {
 
 impl Pop3Client for RealPop3Client {
     fn list(&mut self) -> anyhow::Result<Vec<Pop3MessageInfo>> {
-        self.inner.list().map_err(|e| anyhow::anyhow!("List failed: {:?}", e))
+        self.inner
+            .list()
+            .map_err(|e| anyhow::anyhow!("List failed: {:?}", e))
     }
 
     fn get_unique_id(&mut self, seq_num: u32) -> anyhow::Result<String> {
-        self.inner.get_unique_id(seq_num).map_err(|e| anyhow::anyhow!("UIDL failed: {:?}", e))
+        self.inner
+            .get_unique_id(seq_num)
+            .map_err(|e| anyhow::anyhow!("UIDL failed: {:?}", e))
     }
 
     fn retrieve(&mut self, seq_num: u32, content: &mut Vec<u8>) -> anyhow::Result<()> {
-        self.inner.retrieve(seq_num, content).map_err(|e| anyhow::anyhow!("Retrieve failed: {:?}", e))
+        self.inner
+            .retrieve(seq_num, content)
+            .map_err(|e| anyhow::anyhow!("Retrieve failed: {:?}", e))
     }
 
     fn delete(&mut self, seq_num: u32) -> anyhow::Result<()> {
-        self.inner.delete(seq_num).map_err(|e| anyhow::anyhow!("Delete failed: {:?}", e))
+        self.inner
+            .delete(seq_num)
+            .map_err(|e| anyhow::anyhow!("Delete failed: {:?}", e))
     }
 }
 
@@ -44,14 +52,19 @@ pub struct RealPop3ClientFactory;
 impl Pop3ClientFactory for RealPop3ClientFactory {
     fn create(&self, config: &ReceiverConfig) -> anyhow::Result<Box<dyn Pop3Client>> {
         let mut client: Box<dyn Pop3Connection + Send + Sync> = if config.use_tls.unwrap_or(true) {
-            Box::new(Pop3ConnectionFactory::new(&config.host, config.port)
-                .map_err(|e| anyhow::anyhow!("TLS connection failed: {:?}", e))?)
+            Box::new(
+                Pop3ConnectionFactory::new(&config.host, config.port)
+                    .map_err(|e| anyhow::anyhow!("TLS connection failed: {:?}", e))?,
+            )
         } else {
-            Box::new(Pop3ConnectionFactory::without_tls(&config.host, config.port)
-                .map_err(|e| anyhow::anyhow!("Connection failed: {:?}", e))?)
+            Box::new(
+                Pop3ConnectionFactory::without_tls(&config.host, config.port)
+                    .map_err(|e| anyhow::anyhow!("Connection failed: {:?}", e))?,
+            )
         };
 
-        client.login(&config.username, &config.password)
+        client
+            .login(&config.username, &config.password)
             .map_err(|e| anyhow::anyhow!("Login failed: {:?}", e))?;
 
         Ok(Box::new(RealPop3Client { inner: client }))
@@ -89,7 +102,8 @@ impl MailReceiver for Pop3Receiver {
             let mut emails = Vec::new();
 
             for msg in list {
-                let uid = client.get_unique_id(msg.message_id)
+                let uid = client
+                    .get_unique_id(msg.message_id)
                     .unwrap_or_else(|_| msg.message_id.to_string());
 
                 let mut content = Vec::new();
@@ -113,9 +127,10 @@ impl MailReceiver for Pop3Receiver {
             let list = client.list()?;
 
             for msg in list {
-                let uid = client.get_unique_id(msg.message_id)
+                let uid = client
+                    .get_unique_id(msg.message_id)
                     .unwrap_or_else(|_| msg.message_id.to_string());
-                
+
                 if uid == target_uid {
                     client.delete(msg.message_id)?;
                     return Ok(());
@@ -155,25 +170,35 @@ mod pop3_receiver_tests {
 
             mock_client.expect_list().returning(|| {
                 Ok(vec![
-                    Pop3MessageInfo { message_id: 1, message_size: 100 },
-                    Pop3MessageInfo { message_id: 2, message_size: 200 },
+                    Pop3MessageInfo {
+                        message_id: 1,
+                        message_size: 100,
+                    },
+                    Pop3MessageInfo {
+                        message_id: 2,
+                        message_size: 200,
+                    },
                 ])
             });
 
-            mock_client.expect_get_unique_id()
+            mock_client
+                .expect_get_unique_id()
                 .with(eq(1))
                 .returning(|_| Ok("uid1".to_string()));
-            mock_client.expect_get_unique_id()
+            mock_client
+                .expect_get_unique_id()
                 .with(eq(2))
                 .returning(|_| Ok("uid2".to_string()));
 
-            mock_client.expect_retrieve()
+            mock_client
+                .expect_retrieve()
                 .with(eq(1), always())
                 .returning(|_, buf| {
                     buf.extend_from_slice(b"email1");
                     Ok(())
                 });
-            mock_client.expect_retrieve()
+            mock_client
+                .expect_retrieve()
                 .with(eq(2), always())
                 .returning(|_, buf| {
                     buf.extend_from_slice(b"email2");
@@ -208,11 +233,13 @@ mod pop3_receiver_tests {
                 }])
             });
 
-            mock_client.expect_get_unique_id()
+            mock_client
+                .expect_get_unique_id()
                 .with(eq(10))
                 .returning(move |_| Ok("uid_target".to_string()));
 
-            mock_client.expect_delete()
+            mock_client
+                .expect_delete()
                 .with(eq(10))
                 .returning(|_| Ok(()));
 
@@ -220,7 +247,10 @@ mod pop3_receiver_tests {
         });
 
         let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
-        receiver.delete_email(target_id).await.expect("Delete should succeed");
+        receiver
+            .delete_email(target_id)
+            .await
+            .expect("Delete should succeed");
     }
 
     #[tokio::test]
@@ -251,7 +281,8 @@ mod pop3_receiver_tests {
         let config = get_test_config();
 
         let mut mock_factory = MockPop3ClientFactory::new();
-        mock_factory.expect_create()
+        mock_factory
+            .expect_create()
             .returning(|_| Err(anyhow::anyhow!("Connection failed")));
 
         let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));

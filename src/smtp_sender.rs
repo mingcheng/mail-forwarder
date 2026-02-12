@@ -21,7 +21,8 @@ struct RealSmtpMailer {
 #[async_trait]
 impl SmtpMailer for RealSmtpMailer {
     async fn send(&self, envelope: Envelope, email: &[u8]) -> anyhow::Result<()> {
-        self.transport.send_raw(&envelope, email)
+        self.transport
+            .send_raw(&envelope, email)
             .await
             .map_err(|e| anyhow::anyhow!("SMTP send failed: {}", e))?;
         Ok(())
@@ -86,11 +87,15 @@ impl SmtpSender {
     }
 
     fn create_envelope(&self, target_address: &str) -> anyhow::Result<Envelope> {
-        let sender_addr = self.config.username.parse()
+        let sender_addr = self
+            .config
+            .username
+            .parse()
             .map_err(|e| anyhow::anyhow!("Invalid sender address: {}", e))?;
-        let target_addr = target_address.parse()
+        let target_addr = target_address
+            .parse()
             .map_err(|e| anyhow::anyhow!("Invalid target address: {}", e))?;
-        
+
         Envelope::new(Some(sender_addr), vec![target_addr])
             .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))
     }
@@ -99,14 +104,26 @@ impl SmtpSender {
 #[async_trait]
 impl MailSender for SmtpSender {
     async fn send_email(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
-        let mailer = self.mailer
+        let mailer = self
+            .mailer
             .get_or_try_init(|| async { self.factory.create(&self.config) })
             .await?;
 
         let envelope = self.create_envelope(target_address)?;
 
         let mut final_content = Vec::with_capacity(email.content.len() + 32);
+
+        // Add custom headers
         final_content.extend_from_slice(b"X-Forwarded-By: mail-forwarder\r\n");
+
+        final_content.extend_from_slice(b"X-Original-Message-ID: ");
+        final_content.extend_from_slice(email.id.as_bytes());
+        final_content.extend_from_slice(b"\r\n");
+
+        final_content.extend_from_slice(b"X-Forwarded-Time: ");
+        final_content.extend_from_slice(chrono::Utc::now().to_rfc3339().as_bytes());
+        final_content.extend_from_slice(b"\r\n");
+
         final_content.extend_from_slice(&email.content);
 
         mailer.send(envelope, &final_content).await

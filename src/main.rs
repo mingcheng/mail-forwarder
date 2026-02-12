@@ -114,13 +114,18 @@ async fn main() -> anyhow::Result<()> {
         let handle = tokio::spawn(async move {
             let host = receiver_config.host.clone();
             let username = receiver_config.username.clone();
-            let interval_seconds = receiver_config.check_interval_seconds
+            let interval_seconds = receiver_config
+                .check_interval_seconds
                 .unwrap_or(DEFAULT_CHECK_INTERVAL_SECONDS)
                 .max(10);
 
-            info!("Starting task for {}:{} ({}) - Interval: {}s", host, receiver_config.port, username, interval_seconds);
+            info!(
+                "Starting task for {}:{} ({}) - Interval: {}s",
+                host, receiver_config.port, username, interval_seconds
+            );
 
-            let mut receiver: Box<dyn MailReceiver> = Box::new(Pop3Receiver::new(receiver_config.clone()));
+            let mut receiver: Box<dyn MailReceiver> =
+                Box::new(Pop3Receiver::new(receiver_config.clone()));
             let mut seen_ids: HashSet<String> = HashSet::new();
             let delete_after_forward = receiver_config.delete_after_forward.unwrap_or(false);
 
@@ -147,19 +152,31 @@ async fn main() -> anyhow::Result<()> {
 
                             match sender.send_email(&email, &forward_to).await {
                                 Ok(_) => {
-                                    info!("[{}] Successfully forwarded email {}", username, email.id);
+                                    info!(
+                                        "[{}] Successfully forwarded email {}",
+                                        username, email.id
+                                    );
                                     seen_ids.insert(email.id.clone());
 
                                     if delete_after_forward {
                                         if let Err(e) = receiver.delete_email(&email.id).await {
-                                            error!("[{}] Failed to delete email {}: {:?}", username, email.id, e);
+                                            error!(
+                                                "[{}] Failed to delete email {}: {:?}",
+                                                username, email.id, e
+                                            );
                                         } else {
-                                            info!("[{}] Deleted email from server: {}", username, email.id);
+                                            info!(
+                                                "[{}] Deleted email from server: {}",
+                                                username, email.id
+                                            );
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("[{}] Failed to forward email {}: {:?}", username, email.id, e);
+                                    error!(
+                                        "[{}] Failed to forward email {}: {:?}",
+                                        username, email.id, e
+                                    );
                                 }
                             }
                         }
