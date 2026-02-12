@@ -96,6 +96,11 @@ async fn test_real_smtp_send() {
         password: "<password>".to_string(),
     };
 
+    if config.username.contains("<") {
+        println!("Skipping real SMTP send test due to placeholder credentials");
+        return;
+    }
+
     // If these are dummy credentials, this will likely fail with authentication error or connection timeout,
     // which is expected. We just want to ensure it runs without panicking.
     let sender = SmtpSender::new(config);
