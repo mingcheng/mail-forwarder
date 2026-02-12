@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(config.receivers.len(), 1);
         let receiver = &config.receivers[0];
         assert_eq!(receiver.host, "pop.example.com");
-        assert_eq!(receiver.use_tls, true);
+        assert!(receiver.use_tls);
         assert_eq!(receiver.delete_after_forward, Some(false));
     }
 

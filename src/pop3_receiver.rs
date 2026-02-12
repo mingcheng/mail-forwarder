@@ -328,7 +328,7 @@ mod pop3_receiver_tests {
         match &result {
             Ok(emails) => {
                 println!("Successfully fetched {} emails", emails.len());
-                if emails.len() > 0 {
+                if !emails.is_empty() {
                     let mail = &emails[0];
                     println!("First email ID: {} {:?}", mail.id, mail.content);
                 }
