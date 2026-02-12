@@ -3,9 +3,10 @@ use crate::traits::{Email, MailSender};
 use async_trait::async_trait;
 use lettre::address::Envelope;
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
-use log::warn;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 // Abstract the mailer so we can mock it
 #[cfg_attr(test, mockall::automock)]
@@ -41,11 +42,20 @@ pub struct RealSmtpMailerFactory;
 impl SmtpMailerFactory for RealSmtpMailerFactory {
     fn create(&self, config: &SenderConfig) -> anyhow::Result<Box<dyn SmtpMailer>> {
         let creds = Credentials::new(config.username.clone(), config.password.clone());
-        let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)
             .map_err(|e| anyhow::anyhow!("Invalid SMTP host: {}", e))?
             .port(config.port)
-            .credentials(creds)
-            .build();
+            .credentials(creds);
+
+        if config.use_tls {
+            let tls_params = TlsParameters::new(config.host.clone())
+                .map_err(|e| anyhow::anyhow!("Invalid TLS parameters: {}", e))?;
+            builder = builder.tls(Tls::Wrapper(tls_params));
+        } else {
+            builder = builder.tls(Tls::None);
+        }
+
+        let transport = builder.build();
 
         Ok(Box::new(RealSmtpMailer { transport }))
     }
@@ -58,6 +68,7 @@ mod smtp_sender_tests;
 pub struct SmtpSender {
     config: SenderConfig,
     factory: Arc<dyn SmtpMailerFactory>,
+    mailer: OnceCell<Box<dyn SmtpMailer>>,
 }
 
 impl SmtpSender {
@@ -65,25 +76,27 @@ impl SmtpSender {
         Self {
             config,
             factory: Arc::new(RealSmtpMailerFactory),
+            mailer: OnceCell::new(),
         }
     }
 
     #[allow(dead_code)]
     pub fn new_with_factory(config: SenderConfig, factory: Arc<dyn SmtpMailerFactory>) -> Self {
-        Self { config, factory }
+        Self {
+            config,
+            factory,
+            mailer: OnceCell::new(),
+        }
     }
 }
 
 #[async_trait]
 impl MailSender for SmtpSender {
     async fn send_email(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
-        if self.config.proxy.is_some() {
-            warn!(
-                "SMTP Proxy configuration found but not currently supported by this implementation. Connecting directly."
-            );
-        }
-
-        let mailer = self.factory.create(&self.config)?;
+        let mailer = self
+            .mailer
+            .get_or_try_init(|| async { self.factory.create(&self.config) })
+            .await?;
 
         // Construct Envelope
         // Sender: the user we login as (to pass SPF checks usually)

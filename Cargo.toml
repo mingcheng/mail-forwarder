@@ -21,6 +21,9 @@ env_logger = "0.10"
 tokio-socks = "0.5" # For async proxy (SMTP)
 socks = "0.3" # For blocking proxy (POP3)
 pop3 = { package = "rust-pop3-client", version = "0.3.0" }
+clap = { version = "4.5.57", features = ["derive"] }
+rustls = "0.23.36"
 
 [dev-dependencies]
 mockall = "0.14.0"
+rustls = { version = "0.23.36", features = ["ring"] }

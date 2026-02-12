@@ -6,7 +6,10 @@ pub struct AppConfig {
     pub receivers: Vec<ReceiverConfig>,
     pub sender: SenderConfig,
     pub forward_to: String,
-    pub check_interval_seconds: u64,
+    pub log_file: Option<String>,
+    pub log_level: Option<String>,
+    #[serde(default)]
+    pub quiet: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -18,7 +21,6 @@ pub struct ReceiverConfig {
     pub use_tls: bool,
     pub check_interval_seconds: Option<u64>,
     pub delete_after_forward: Option<bool>,
-    pub proxy: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -27,7 +29,7 @@ pub struct SenderConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
-    pub proxy: Option<String>,
+    pub use_tls: bool,
 }
 
 // Default check interval in seconds (5 minutes)
@@ -35,6 +37,8 @@ pub const DEFAULT_CHECK_INTERVAL_SECONDS: u64 = 300;
 
 // Implement loading configuration
 impl AppConfig {
+    // Load config from defaults, then file (if exists), then environment variables
+    #[allow(dead_code)]
     pub fn new() -> Result<Self, ConfigError> {
         Self::configure_defaults()?
             // Merge in config file if present
@@ -46,10 +50,19 @@ impl AppConfig {
             .try_deserialize()
     }
 
-    fn configure_defaults() -> Result<config::ConfigBuilder<config::builder::DefaultState>, ConfigError> {
-        Config::builder()
-            // Start with defaults
-            .set_default("check_interval_seconds", DEFAULT_CHECK_INTERVAL_SECONDS)
+    // Load config from a specific file path
+    #[allow(dead_code)]
+    pub fn new_from_file(path: &str) -> Result<Self, ConfigError> {
+        Self::configure_defaults()?
+            .add_source(File::with_name(path).required(true))
+            .add_source(Environment::with_prefix("APP").separator("__"))
+            .build()?
+            .try_deserialize()
+    }
+
+    fn configure_defaults()
+    -> Result<config::ConfigBuilder<config::builder::DefaultState>, ConfigError> {
+        Ok(Config::builder())
     }
 }
 
@@ -62,7 +75,6 @@ mod tests {
     fn test_valid_config_deserialization() {
         let toml_str = r#"
             forward_to = "target@example.com"
-            check_interval_seconds = 120
 
             [sender]
             host = "smtp.example.com"
@@ -79,17 +91,17 @@ mod tests {
             delete_after_forward = false
         "#;
 
-        let builder = AppConfig::configure_defaults().unwrap()
+        let builder = AppConfig::configure_defaults()
+            .unwrap()
             .add_source(File::from_str(toml_str, FileFormat::Toml));
-        
+
         let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
 
         assert_eq!(config.forward_to, "target@example.com");
-        assert_eq!(config.check_interval_seconds, 120);
-        
+
         assert_eq!(config.sender.host, "smtp.example.com");
         assert_eq!(config.sender.port, 587);
-        
+
         assert_eq!(config.receivers.len(), 1);
         let receiver = &config.receivers[0];
         assert_eq!(receiver.host, "pop.example.com");
@@ -117,12 +129,11 @@ mod tests {
             use_tls = true
         "#;
 
-        let builder = AppConfig::configure_defaults().unwrap()
+        let builder = AppConfig::configure_defaults()
+            .unwrap()
             .add_source(File::from_str(toml_str, FileFormat::Toml));
-        
-        let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
 
-        assert_eq!(config.check_interval_seconds, DEFAULT_CHECK_INTERVAL_SECONDS);
+        let _config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
     }
 
     #[test]
@@ -150,9 +161,10 @@ mod tests {
             use_tls = false
         "#;
 
-        let builder = AppConfig::configure_defaults().unwrap()
+        let builder = AppConfig::configure_defaults()
+            .unwrap()
             .add_source(File::from_str(toml_str, FileFormat::Toml));
-        
+
         let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
 
         assert_eq!(config.receivers.len(), 2);
@@ -162,9 +174,8 @@ mod tests {
 
     #[test]
     fn test_invalid_config_type() {
-         let toml_str = r#"
-            forward_to = "t"
-            check_interval_seconds = "not_a_number" # Invalid type
+        let toml_str = r#"
+            forward_to = 123 # Invalid type
             
             [sender]
             host = "h" 
@@ -172,40 +183,12 @@ mod tests {
             username = "u"
             password = "p"
         "#;
-        
-        let builder = AppConfig::configure_defaults().unwrap()
+
+        let builder = AppConfig::configure_defaults()
+            .unwrap()
             .add_source(File::from_str(toml_str, FileFormat::Toml));
-            
+
         let res: Result<AppConfig, _> = builder.build().unwrap().try_deserialize();
         assert!(res.is_err());
-    }
-
-    #[test]
-    fn test_proxy_config() {
-        let toml_str = r#"
-            forward_to = "t"
-            [sender]
-            host = "h"
-            port = 1
-            username = "u"
-            password = "p"
-            proxy = "socks5://localhost:1080"
-
-            [[receivers]]
-            host = "r"
-            port = 1
-            username = "u"
-            password = "p"
-            use_tls = true
-            proxy = "socks5://localhost:1080"
-        "#;
-        
-        let builder = AppConfig::configure_defaults().unwrap()
-            .add_source(File::from_str(toml_str, FileFormat::Toml));
-            
-        let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
-        
-        assert_eq!(config.sender.proxy, Some("socks5://localhost:1080".to_string()));
-        assert_eq!(config.receivers[0].proxy, Some("socks5://localhost:1080".to_string()));
     }
 }
