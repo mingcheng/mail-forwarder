@@ -35,34 +35,23 @@ pub struct SenderConfig {
 // Default check interval in seconds (5 minutes)
 pub const DEFAULT_CHECK_INTERVAL_SECONDS: u64 = 300;
 
-// Implement loading configuration
 impl AppConfig {
-    // Load config from defaults, then file (if exists), then environment variables
-    #[allow(dead_code)]
+    /// Load config from defaults, then file (if exists), then environment variables
     pub fn new() -> Result<Self, ConfigError> {
-        Self::configure_defaults()?
-            // Merge in config file if present
+        Config::builder()
             .add_source(File::with_name("config").required(false))
-            // Merge in environment variables
-            // e.g. APP_FORWARD_TO=... APP_RECEIVER__HOST=...
             .add_source(Environment::with_prefix("APP").separator("__"))
             .build()?
             .try_deserialize()
     }
 
-    // Load config from a specific file path
-    #[allow(dead_code)]
+    /// Load config from a specific file path
     pub fn new_from_file(path: &str) -> Result<Self, ConfigError> {
-        Self::configure_defaults()?
+        Config::builder()
             .add_source(File::with_name(path).required(true))
             .add_source(Environment::with_prefix("APP").separator("__"))
             .build()?
             .try_deserialize()
-    }
-
-    fn configure_defaults()
-    -> Result<config::ConfigBuilder<config::builder::DefaultState>, ConfigError> {
-        Ok(Config::builder())
     }
 }
 
@@ -91,11 +80,12 @@ mod tests {
             delete_after_forward = false
         "#;
 
-        let builder = AppConfig::configure_defaults()
+        let config: AppConfig = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
             .unwrap()
-            .add_source(File::from_str(toml_str, FileFormat::Toml));
-
-        let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
+            .try_deserialize()
+            .unwrap();
 
         assert_eq!(config.forward_to, "target@example.com");
 
@@ -111,7 +101,6 @@ mod tests {
 
     #[test]
     fn test_default_values() {
-        // Minimal config (missing check_interval_seconds)
         let toml_str = r#"
             forward_to = "target@example.com"
 
@@ -129,11 +118,12 @@ mod tests {
             use_tls = true
         "#;
 
-        let builder = AppConfig::configure_defaults()
+        let _config: AppConfig = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
             .unwrap()
-            .add_source(File::from_str(toml_str, FileFormat::Toml));
-
-        let _config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
+            .try_deserialize()
+            .unwrap();
     }
 
     #[test]
@@ -161,11 +151,12 @@ mod tests {
             use_tls = false
         "#;
 
-        let builder = AppConfig::configure_defaults()
+        let config: AppConfig = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
             .unwrap()
-            .add_source(File::from_str(toml_str, FileFormat::Toml));
-
-        let config: AppConfig = builder.build().unwrap().try_deserialize().unwrap();
+            .try_deserialize()
+            .unwrap();
 
         assert_eq!(config.receivers.len(), 2);
         assert_eq!(config.receivers[0].host, "r1");
@@ -175,7 +166,7 @@ mod tests {
     #[test]
     fn test_invalid_config_type() {
         let toml_str = r#"
-            forward_to = 123 # Invalid type
+            forward_to = 123
             
             [sender]
             host = "h" 
@@ -184,11 +175,11 @@ mod tests {
             password = "p"
         "#;
 
-        let builder = AppConfig::configure_defaults()
+        let res: Result<AppConfig, _> = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
             .unwrap()
-            .add_source(File::from_str(toml_str, FileFormat::Toml));
-
-        let res: Result<AppConfig, _> = builder.build().unwrap().try_deserialize();
+            .try_deserialize();
         assert!(res.is_err());
     }
 }

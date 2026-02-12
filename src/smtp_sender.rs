@@ -8,30 +8,26 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-// Abstract the mailer so we can mock it
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait SmtpMailer: Send + Sync {
     async fn send(&self, envelope: Envelope, email: &[u8]) -> anyhow::Result<()>;
 }
 
-// Wrapper for Real Lettre Transport
-pub struct RealSmtpMailer {
+struct RealSmtpMailer {
     transport: AsyncSmtpTransport<Tokio1Executor>,
 }
 
 #[async_trait]
 impl SmtpMailer for RealSmtpMailer {
     async fn send(&self, envelope: Envelope, email: &[u8]) -> anyhow::Result<()> {
-        self.transport
-            .send_raw(&envelope, email)
+        self.transport.send_raw(&envelope, email)
             .await
-            .map_err(|e| anyhow::anyhow!("SMTP send error: {}", e))
-            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("SMTP send failed: {}", e))?;
+        Ok(())
     }
 }
 
-// Factory trait
 #[cfg_attr(test, mockall::automock)]
 pub trait SmtpMailerFactory: Send + Sync {
     fn create(&self, config: &SenderConfig) -> anyhow::Result<Box<dyn SmtpMailer>>;
@@ -80,7 +76,7 @@ impl SmtpSender {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new_with_factory(config: SenderConfig, factory: Arc<dyn SmtpMailerFactory>) -> Self {
         Self {
             config,
@@ -88,44 +84,31 @@ impl SmtpSender {
             mailer: OnceCell::new(),
         }
     }
+
+    fn create_envelope(&self, target_address: &str) -> anyhow::Result<Envelope> {
+        let sender_addr = self.config.username.parse()
+            .map_err(|e| anyhow::anyhow!("Invalid sender address: {}", e))?;
+        let target_addr = target_address.parse()
+            .map_err(|e| anyhow::anyhow!("Invalid target address: {}", e))?;
+        
+        Envelope::new(Some(sender_addr), vec![target_addr])
+            .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))
+    }
 }
 
 #[async_trait]
 impl MailSender for SmtpSender {
     async fn send_email(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
-        let mailer = self
-            .mailer
+        let mailer = self.mailer
             .get_or_try_init(|| async { self.factory.create(&self.config) })
             .await?;
 
-        // Construct Envelope
-        // Sender: the user we login as (to pass SPF checks usually)
-        // Recipient: the forwarding target
-        let sender_addr = self
-            .config
-            .username
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid sender address (username): {}", e))?;
+        let envelope = self.create_envelope(target_address)?;
 
-        let target_addr = target_address
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid target address: {}", e))?;
-
-        let envelope = Envelope::new(Some(sender_addr), vec![target_addr])
-            .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))?;
-
-        // Add X-Forwarded-By header
-        // Simple prepend approach.
-        let mut final_content = Vec::new();
+        let mut final_content = Vec::with_capacity(email.content.len() + 32);
         final_content.extend_from_slice(b"X-Forwarded-By: mail-forwarder\r\n");
         final_content.extend_from_slice(&email.content);
 
-        // Send raw content using our abstraction
-        mailer
-            .send(envelope, &final_content)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send email: {}", e))?;
-
-        Ok(())
+        mailer.send(envelope, &final_content).await
     }
 }
