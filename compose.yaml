@@ -1,0 +1,11 @@
+services:
+  mail-forwarder:
+    build:
+      context: .
+    network_mode: host
+    environment:
+      LOG_LEVEL: ""
+
+    volumes:
+      - .:/repo:rw
+      - ./config.toml:/repo/config.toml:ro
