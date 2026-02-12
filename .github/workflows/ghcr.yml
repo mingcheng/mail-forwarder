@@ -62,9 +62,13 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=mail-forwarder
-            org.opencontainers.image.description=AI-powered Git commit message generator
+            org.opencontainers.image.description=A simple mail forwarding tool to forward emails to another address.
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.url=https://github.com/mingcheng/mail-forwarder
-            org.opencontainers.image.source=https://github.com/mingcheng/mail-forwarder 
+            org.opencontainers.image.source=https://github.com/mingcheng/mail-forwarder
+            org.opencontainers.image.licenses=MIT
             org.opencontainers.image.vendor=${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
 
       - name: Build and push Docker image

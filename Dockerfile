@@ -75,4 +75,4 @@ USER mailer
 ENTRYPOINT ["/bin/mail-forwarder"]
 
 # Default command (can be overridden)
-CMD ["--config", "/repo/config.toml"]
+CMD ["--help"]
