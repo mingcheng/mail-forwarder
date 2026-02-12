@@ -61,7 +61,7 @@ impl Pop3ClientFactory for RealPop3ClientFactory {
     fn create(&self, config: &ReceiverConfig) -> anyhow::Result<Box<dyn Pop3Client>> {
         // We cast to Box<dyn Pop3Connection + Send + Sync>
         // Assuming the library implementation is Send + Sync (usually TcpStream is).
-        let mut client: Box<dyn Pop3Connection + Send + Sync> = if config.use_tls {
+        let mut client: Box<dyn Pop3Connection + Send + Sync> = if config.use_tls.unwrap_or(true) {
             let conn = Pop3ConnectionFactory::new(&config.host, config.port)
                 .map_err(|e| anyhow::anyhow!("TLS Connection error: {:?}", e))?;
             Box::new(conn)
@@ -198,7 +198,7 @@ mod pop3_receiver_tests {
             port: 995,
             username: "<username>".to_string(),
             password: "<password>".to_string(),
-            use_tls: true,
+            use_tls: Some(true),
             check_interval_seconds: Some(60),
             delete_after_forward: Some(false),
         }

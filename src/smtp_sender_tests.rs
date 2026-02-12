@@ -10,7 +10,7 @@ async fn test_send_email_success() {
         port: 465,
         username: "sender@test.com".to_string(),
         password: "pass".to_string(),
-        use_tls: true,
+        use_tls: Some(true),
     };
 
     let mut mock_factory = MockSmtpMailerFactory::new();
@@ -64,7 +64,7 @@ async fn test_send_email_factory_error() {
         port: 587,
         username: "sender@test.com".to_string(),
         password: "pass".to_string(),
-        use_tls: true,
+        use_tls: Some(true),
     };
 
     let mut mock_factory = MockSmtpMailerFactory::new();
@@ -90,7 +90,7 @@ async fn test_real_smtp_send() {
 
     let config = SenderConfig {
         port: 465,
-        use_tls: true,
+        use_tls: Some(true),
         host: "<host>".to_string(),
         username: "<username>".to_string(),
         password: "<password>".to_string(),

@@ -18,7 +18,7 @@ pub struct ReceiverConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
-    pub use_tls: bool,
+    pub use_tls: Option<bool>,
     pub check_interval_seconds: Option<u64>,
     pub delete_after_forward: Option<bool>,
 }
@@ -29,7 +29,7 @@ pub struct SenderConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
-    pub use_tls: bool,
+    pub use_tls: Option<bool>,
 }
 
 // Default check interval in seconds (5 minutes)
@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(config.receivers.len(), 1);
         let receiver = &config.receivers[0];
         assert_eq!(receiver.host, "pop.example.com");
-        assert!(receiver.use_tls);
+        assert!(receiver.use_tls.unwrap_or(true));
         assert_eq!(receiver.delete_after_forward, Some(false));
     }
 

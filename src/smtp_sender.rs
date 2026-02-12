@@ -47,7 +47,7 @@ impl SmtpMailerFactory for RealSmtpMailerFactory {
             .port(config.port)
             .credentials(creds);
 
-        if config.use_tls {
+        if config.use_tls.unwrap_or(true) {
             let tls_params = TlsParameters::new(config.host.clone())
                 .map_err(|e| anyhow::anyhow!("Invalid TLS parameters: {}", e))?;
             builder = builder.tls(Tls::Wrapper(tls_params));
