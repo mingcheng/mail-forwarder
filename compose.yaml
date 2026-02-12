@@ -4,8 +4,9 @@ services:
       context: .
     network_mode: host
     environment:
-      LOG_LEVEL: ""
-
+      TZ: "Asia/Shanghai"
+    # Set working directory to match Dockerfile
+    working_dir: /app
     volumes:
-      - .:/repo:rw
-      - ./config.toml:/repo/config.toml:ro
+      # Mount only the config file, not the entire directory
+      - ./config.toml:/app/config.toml:ro

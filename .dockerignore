@@ -39,3 +39,5 @@ Thumbs.db
 .DS*
 /.vscode/*.log
 .*~
+
+/Cargo.lock
