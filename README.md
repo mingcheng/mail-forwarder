@@ -1,13 +1,17 @@
 # Mail Forwarder
 
-A lightweight tool to forward emails from POP3/IMAP accounts to a specified SMTP destination.
+A lightweight tool to forward emails from POP3/IMAP accounts to a specified SMTP destination written in Rust. 
+
+The Gmail DO NOT support POP3 or Gmailify for the forwarding email address, so you need to use an App Password for authentication. For more details, please refer to the [official Gmail documentation](https://support.google.com/mail/answer/16604719). 
+
+So, I wrote this tool to forward emails from POP3/IMAP accounts to a specified SMTP destination, which can be used with Gmail or any other email service that supports SMTP.
 
 ## Features
 
 - Support for **POP3** and **IMAP** protocols.
 - Monitor multiple email accounts simultaneously.
 - TLS/SSL support.
-- Configurable check intervals.
+- Configurable check intervals (in seconds).
 
 ## Installation
 
