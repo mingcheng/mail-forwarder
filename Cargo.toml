@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 anyhow = "1"
 async-trait = "0.1"
 lettre = { version = "0.11", default-features = false, features = [
@@ -21,6 +22,9 @@ env_logger = "0.10"
 tokio-socks = "0.5" # For async proxy (SMTP)
 socks = "0.3" # For blocking proxy (POP3)
 pop3 = { package = "rust-pop3-client", version = "0.3.0" }
+async-imap = "0.10"
+async-native-tls = "0.5"
+futures = "0.3"
 clap = { version = "4.5.57", features = ["derive"] }
 rustls = "0.23.36"
 chrono = "0.4.43"
