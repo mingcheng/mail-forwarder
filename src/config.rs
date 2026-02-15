@@ -1,4 +1,18 @@
-use config::{Config, ConfigError, Environment, File};
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: config.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 22:37:25
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-15 14:37:31
+ */
+
+use config::{Config, ConfigError, File};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -27,10 +41,12 @@ pub struct ReceiverConfig {
     pub imap_folder: String, // IMAP mailbox folder, default "INBOX"
 }
 
+// Default protocol is "pop3"
 fn default_protocol() -> String {
     "pop3".to_string()
 }
 
+// Default IMAP folder is "INBOX"
 fn default_imap_folder() -> String {
     "INBOX".to_string()
 }
@@ -47,12 +63,14 @@ pub struct SenderConfig {
 // Default check interval in seconds (5 minutes)
 pub const DEFAULT_CHECK_INTERVAL_SECONDS: u64 = 300;
 
+// Default config file path
+pub const DEFAULT_CONFIG_PATH: &str = "/etc/mail-forwarder/config.toml";
+
 impl AppConfig {
     /// Load config from defaults, then file (if exists), then environment variables
     pub fn new() -> Result<Self, ConfigError> {
         Config::builder()
-            .add_source(File::with_name("config").required(false))
-            .add_source(Environment::with_prefix("APP").separator("__"))
+            .add_source(File::with_name(DEFAULT_CONFIG_PATH).required(false))
             .build()?
             .try_deserialize()
     }
@@ -61,7 +79,6 @@ impl AppConfig {
     pub fn new_from_file(path: &str) -> Result<Self, ConfigError> {
         Config::builder()
             .add_source(File::with_name(path).required(true))
-            .add_source(Environment::with_prefix("APP").separator("__"))
             .build()?
             .try_deserialize()
     }

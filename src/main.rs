@@ -1,3 +1,17 @@
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: main.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 15:38:23
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-15 14:25:38
+ */
+
 mod config;
 mod imap_receiver;
 mod pop3_receiver;
