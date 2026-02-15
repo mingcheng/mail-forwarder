@@ -154,9 +154,11 @@ mod pop3_receiver_tests {
             port: 995,
             username: "test_user".to_string(),
             password: "test_pass".to_string(),
+            protocol: "pop3".to_string(),
             use_tls: Some(true),
             check_interval_seconds: Some(60),
             delete_after_forward: Some(false),
+            imap_folder: "INBOX".to_string(),
         }
     }
 

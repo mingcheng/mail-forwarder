@@ -1,10 +1,12 @@
 mod config;
+mod imap_receiver;
 mod pop3_receiver;
 mod smtp_sender;
 mod traits;
 
 use clap::Parser;
 use config::{AppConfig, DEFAULT_CHECK_INTERVAL_SECONDS};
+use imap_receiver::ImapReceiver;
 use log::{error, info, warn};
 use pop3_receiver::Pop3Receiver;
 use rustls::crypto;
@@ -120,12 +122,15 @@ async fn main() -> anyhow::Result<()> {
                 .max(10);
 
             info!(
-                "Starting task for {}:{} ({}) - Interval: {}s",
-                host, receiver_config.port, username, interval_seconds
+                "Starting task for {}:{} ({}) - Protocol: {} - Interval: {}s",
+                host, receiver_config.port, username, receiver_config.protocol, interval_seconds
             );
 
-            let mut receiver: Box<dyn MailReceiver> =
-                Box::new(Pop3Receiver::new(receiver_config.clone()));
+            #[allow(clippy::wildcard_in_or_patterns)]
+            let mut receiver: Box<dyn MailReceiver> = match receiver_config.protocol.as_str() {
+                "imap" => Box::new(ImapReceiver::new(receiver_config.clone())),
+                "pop3" | _ => Box::new(Pop3Receiver::new(receiver_config.clone())),
+            };
             let mut seen_ids: HashSet<String> = HashSet::new();
             let delete_after_forward = receiver_config.delete_after_forward.unwrap_or(false);
 

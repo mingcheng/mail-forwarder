@@ -18,9 +18,21 @@ pub struct ReceiverConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
+    #[serde(default = "default_protocol")]
+    pub protocol: String, // "pop3" or "imap"
     pub use_tls: Option<bool>,
     pub check_interval_seconds: Option<u64>,
     pub delete_after_forward: Option<bool>,
+    #[serde(default = "default_imap_folder")]
+    pub imap_folder: String, // IMAP mailbox folder, default "INBOX"
+}
+
+fn default_protocol() -> String {
+    "pop3".to_string()
+}
+
+fn default_imap_folder() -> String {
+    "INBOX".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -76,6 +88,7 @@ mod tests {
             port = 995
             username = "receiver_user"
             password = "receiver_pass"
+            protocol = "pop3"
             use_tls = true
             delete_after_forward = false
         "#;
@@ -109,12 +122,13 @@ mod tests {
             port = 587
             username = "u"
             password = "p"
-            
+
             [[receivers]]
             host = "pop.example.com"
             port = 995
             username = "u"
             password = "p"
+            protocol = "pop3"
             use_tls = true
         "#;
 
@@ -141,6 +155,7 @@ mod tests {
             port = 1
             username = "u1"
             password = "p1"
+            protocol = "pop3"
             use_tls = true
 
             [[receivers]]
@@ -148,6 +163,7 @@ mod tests {
             port = 2
             username = "u2"
             password = "p2"
+            protocol = "imap"
             use_tls = false
         "#;
 
@@ -167,9 +183,9 @@ mod tests {
     fn test_invalid_config_type() {
         let toml_str = r#"
             forward_to = 123
-            
+
             [sender]
-            host = "h" 
+            host = "h"
             port = 1
             username = "u"
             password = "p"
