@@ -2,7 +2,7 @@
 
 A lightweight tool to forward emails from POP3/IMAP accounts to a specified SMTP destination written in Rust. 
 
-The Gmail DO NOT support POP3 or Gmailify for the forwarding email address, so you need to use an App Password for authentication. For more details, please refer to the [official Gmail documentation](https://support.google.com/mail/answer/16604719). 
+Gmail DOES NOT support POP3 or Gmailify for the forwarding email from third-party mail services, for more details, please refer to the [official Gmail documentation](https://support.google.com/mail/answer/16604719). 
 
 So, I wrote this tool to forward emails from POP3/IMAP accounts to a specified SMTP destination, which can be used with Gmail or any other email service that supports SMTP.
 
@@ -13,11 +13,38 @@ So, I wrote this tool to forward emails from POP3/IMAP accounts to a specified S
 - TLS/SSL support.
 - Configurable check intervals (in seconds).
 
-## Installation
+
+## Run with Docker(recommended)
+
+You can also run the mail forwarder using per-compiled docker image, which is available on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/mingcheng/mail-forwarder
+```
+
+and suggest run it in the docker compose:
+
+```yaml
+services:
+  mail-forwarder:
+    image: ghcr.io/mingcheng/mail-forwarder
+    network_mode: host
+    environment:
+      TZ: "Asia/Shanghai"
+    volumes:
+      - ./data:/app/
+      - ./data/config.toml:/app/config.toml:ro # Mount the config file as read-only
+```
+
+## Build from source
+
+Make sure you have Rust installed, then clone the repository and build the project:
 
 ```bash
 cargo build --release
 ```
+
+then run the binary if you have configured the `config.toml` file.
 
 ## Configuration
 
@@ -57,7 +84,7 @@ imap_folder = "INBOX"
 check_interval_seconds = 60
 ```
 
-> **Note**: For services like Gmail or Outlook, please use an **App Password** instead of your login password.
+> **Note**: For services like Gmail or Outlook, please use an **App Password** instead of your login password for the security reasons. You can generate an App Password in your email account settings.
 
 ## Usage
 
