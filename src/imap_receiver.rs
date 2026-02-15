@@ -157,14 +157,6 @@ mod imap_receiver_tests {
     }
 
     #[tokio::test]
-    async fn test_imap_receiver_creation() {
-        let config = get_test_config();
-        let _receiver = ImapReceiver::new(config);
-        // Just test that we can create the receiver
-        assert!(true);
-    }
-
-    #[tokio::test]
     async fn test_real_imap_connection() {
         let config = get_test_config();
 
