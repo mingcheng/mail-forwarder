@@ -1,3 +1,17 @@
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: pop3_receiver.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 15:38:23
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-27 16:30:59
+ */
+
 use crate::config::ReceiverConfig;
 use crate::traits::{Email, MailReceiver};
 use async_trait::async_trait;

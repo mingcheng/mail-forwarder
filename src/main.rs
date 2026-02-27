@@ -9,11 +9,12 @@
  * File Created: 2026-02-12 15:38:23
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-15 14:25:38
+ * Last Modified: 2026-02-27 16:23:51
  */
 
 mod config;
 mod imap_receiver;
+mod notifications;
 mod pop3_receiver;
 mod smtp_sender;
 mod traits;
@@ -31,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::broadcast;
-use traits::{MailReceiver, MailSender};
+use traits::{MailReceiver, MailSender, Notification};
 
 struct MultiWriter {
     writers: Vec<Box<dyn Write + Send + 'static>>,
@@ -94,10 +95,118 @@ fn initialize_logger(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Context required for processing a batch of fetched emails.
+/// This struct groups together all the necessary dependencies and state
+/// to avoid passing too many arguments to the `process_emails` function.
+struct ProcessContext<'a> {
+    /// The username of the receiver account, used for logging.
+    username: &'a str,
+    /// The SMTP sender instance used to forward emails.
+    sender: &'a SmtpSender,
+    /// The target email address to forward to.
+    forward_to: &'a str,
+    /// The receiver instance, used to delete emails from the server if configured.
+    receiver: &'a mut dyn MailReceiver,
+    /// A set of email IDs that have already been processed, to prevent duplicate processing.
+    seen_ids: &'a mut HashSet<String>,
+    /// Whether to delete emails from the source server after successful forwarding.
+    delete_after_forward: bool,
+    /// A list of notification handlers to trigger after successful processing.
+    notifications: &'a [Box<dyn Notification>],
+}
+
+/// Processes a batch of fetched emails.
+///
+/// This function handles the core logic of:
+/// 1. Forwarding each new email via SMTP.
+/// 2. Tracking successfully forwarded emails.
+/// 3. Deleting successfully forwarded emails from the source server (if configured).
+/// 4. Triggering notifications for successfully processed emails.
+async fn process_emails(ctx: &mut ProcessContext<'_>, emails: Vec<traits::Email>) {
+    let mut to_delete = Vec::new();
+    let mut successfully_processed = Vec::new();
+
+    // Step 1 & 2: Forward emails and track successes
+    for email in emails {
+        // Skip if we've already seen this email ID in the current session
+        if ctx.seen_ids.contains(&email.id) {
+            continue;
+        }
+
+        info!("[{}] Processing new email ID: {}", ctx.username, email.id);
+
+        match ctx.sender.send_email(&email, ctx.forward_to).await {
+            Ok(_) => {
+                info!(
+                    "[{}] Successfully forwarded email {}",
+                    ctx.username, email.id
+                );
+                // Mark as seen to avoid reprocessing
+                ctx.seen_ids.insert(email.id.clone());
+                // Queue for deletion if forwarding succeeded
+                to_delete.push(email.id.clone());
+                // Queue for notification
+                successfully_processed.push(email);
+            }
+            Err(e) => {
+                error!(
+                    "[{}] Failed to forward email {}: {:?}",
+                    ctx.username, email.id, e
+                );
+            }
+        }
+    }
+
+    // Step 3: Delete emails from the source server if configured
+    let notify_emails = if ctx.delete_after_forward && !to_delete.is_empty() {
+        match ctx.receiver.delete_emails(&to_delete).await {
+            Ok(_) => {
+                info!(
+                    "[{}] Successfully deleted {} emails from server",
+                    ctx.username,
+                    to_delete.len()
+                );
+                // Remove deleted emails from seen_ids to prevent memory leaks over time
+                for id in &to_delete {
+                    ctx.seen_ids.remove(id);
+                }
+                // Only notify if deletion also succeeded
+                successfully_processed
+            }
+            Err(e) => {
+                error!("[{}] Failed to delete emails: {:?}", ctx.username, e);
+                // Skip notifications if deletion fails, to avoid false positives
+                // or duplicate notifications if the email is fetched again later.
+                Vec::new()
+            }
+        }
+    } else {
+        // If deletion is not configured, notify for all successfully forwarded emails
+        successfully_processed
+    };
+
+    // Step 4: Trigger notifications
+    for email in notify_emails {
+        for notification in ctx.notifications {
+            if let Err(e) = notification.notify(&email, ctx.forward_to).await {
+                error!(
+                    "[{}] Failed to send notification for email {}: {:?}",
+                    ctx.username, email.id, e
+                );
+            }
+        }
+    }
+}
+
+/// Runs the main loop for a single email receiver account.
+///
+/// This task periodically polls the source server for new emails,
+/// processes them, and handles graceful shutdown.
 async fn run_receiver_task(
     receiver_config: ReceiverConfig,
     sender: Arc<SmtpSender>,
     forward_to: String,
+    notifications: Arc<Vec<Box<dyn Notification>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     let host = receiver_config.host.clone();
@@ -140,45 +249,16 @@ async fn run_receiver_task(
 
         match receiver.fetch_emails(&seen_ids).await {
             Ok(emails) => {
-                let mut to_delete = Vec::new();
-                for email in emails {
-                    // seen_ids check is already done in fetch_emails, but we can keep it here just in case
-                    if seen_ids.contains(&email.id) {
-                        continue;
-                    }
-
-                    info!("[{}] Processing new email ID: {}", username, email.id);
-
-                    match sender.send_email(&email, &forward_to).await {
-                        Ok(_) => {
-                            info!("[{}] Successfully forwarded email {}", username, email.id);
-                            seen_ids.insert(email.id.clone());
-                            to_delete.push(email.id.clone());
-                        }
-                        Err(e) => {
-                            error!(
-                                "[{}] Failed to forward email {}: {:?}",
-                                username, email.id, e
-                            );
-                        }
-                    }
-                }
-
-                if delete_after_forward && !to_delete.is_empty() {
-                    if let Err(e) = receiver.delete_emails(&to_delete).await {
-                        error!("[{}] Failed to delete emails: {:?}", username, e);
-                    } else {
-                        info!(
-                            "[{}] Successfully deleted {} emails from server",
-                            username,
-                            to_delete.len()
-                        );
-                        // Remove deleted emails from seen_ids to prevent memory leak
-                        for id in &to_delete {
-                            seen_ids.remove(id);
-                        }
-                    }
-                }
+                let mut ctx = ProcessContext {
+                    username: &username,
+                    sender: &sender,
+                    forward_to: &forward_to,
+                    receiver: receiver.as_mut(),
+                    seen_ids: &mut seen_ids,
+                    delete_after_forward,
+                    notifications: &notifications,
+                };
+                process_emails(&mut ctx, emails).await;
             }
             Err(e) => {
                 error!("[{}] Error fetching emails: {:?}", username, e);
@@ -211,6 +291,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Mail Forwarder...");
     info!("Forwarding to: {}", config.forward_to);
 
+    let notifications = Arc::new(notifications::create_notifications(&config.notifications));
     let sender = Arc::new(SmtpSender::new(config.sender.clone()));
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut handles = vec![];
@@ -218,10 +299,18 @@ async fn main() -> anyhow::Result<()> {
     for receiver_config in config.receivers {
         let sender = sender.clone();
         let forward_to = config.forward_to.clone();
+        let notifications = notifications.clone();
         let shutdown_rx = shutdown_tx.subscribe();
 
         let handle = tokio::spawn(async move {
-            run_receiver_task(receiver_config, sender, forward_to, shutdown_rx).await;
+            run_receiver_task(
+                receiver_config,
+                sender,
+                forward_to,
+                notifications,
+                shutdown_rx,
+            )
+            .await;
         });
 
         handles.push(handle);

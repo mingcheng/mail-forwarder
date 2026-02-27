@@ -1,3 +1,17 @@
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: imap_receiver.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 22:39:30
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-27 16:30:43
+ */
+
 use crate::config::ReceiverConfig;
 use crate::traits::{Email, MailReceiver};
 use async_imap::Session;
@@ -169,12 +183,14 @@ impl MailReceiver for ImapReceiver {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to select mailbox {}: {}", mailbox, e))?;
 
-        for id in ids {
-            // Mark the message as deleted
+        let sequence_set = ids.join(",");
+
+        // Mark the messages as deleted
+        {
             let store_stream = session
-                .store(id, "+FLAGS (\\Deleted)")
+                .store(sequence_set, "+FLAGS (\\Deleted)")
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to mark message {} as deleted: {}", id, e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to mark messages as deleted: {}", e))?;
             pin_mut!(store_stream);
 
             // Consume the stream

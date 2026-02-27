@@ -43,3 +43,9 @@ pub trait MailSender: Send + Sync {
     /// Sends an email content to a specific recipient
     async fn send_email(&self, email: &Email, target_address: &str) -> anyhow::Result<()>;
 }
+
+#[async_trait]
+pub trait Notification: Send + Sync {
+    /// Sends a notification about a successfully forwarded email
+    async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()>;
+}

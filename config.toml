@@ -2,13 +2,30 @@
 forward_to = "destination@example.com"
 check_interval_seconds = 60
 
+[[notifications]]
+type = "telegram"
+chat_id = "your_telegram_chat_id"
+token = "your_telegram_bot_token"
+
+[[notifications]]
+type = "file"
+file_path = "forwarding_log.txt"
+
+[[notifications]]
+type = "email"
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "your_email@gmail.com"
+smtp_password = "your_email_password"
+
+
 # Receiver Settings (POP3)
 [[receivers]]
 host = "pop.gmail.com"
 port = 995
 username = "your_email@gmail.com"
 password = "your_password"
-protocol = "pop3"  # Protocol: "pop3" or "imap"
+protocol = "pop3"                 # Protocol: "pop3" or "imap"
 use_tls = true
 check_interval_seconds = 30       # specific interval for this account
 # proxy = "127.0.0.1:1080" # Optional SOCKS5 proxy
@@ -20,9 +37,9 @@ host = "imap.gmail.com"
 port = 993
 username = "your_email@gmail.com"
 password = "your_password"
-protocol = "imap"  # Use IMAP protocol
+protocol = "imap"                 # Use IMAP protocol
 use_tls = true
-imap_folder = "INBOX"  # IMAP mailbox folder to monitor
+imap_folder = "INBOX"             # IMAP mailbox folder to monitor
 check_interval_seconds = 30
 delete_after_forward = false
 
