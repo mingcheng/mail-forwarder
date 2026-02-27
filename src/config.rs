@@ -19,6 +19,8 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub receivers: Vec<ReceiverConfig>,
     pub sender: SenderConfig,
+    #[serde(default)]
+    pub notifications: Vec<NotificationConfig>,
     pub forward_to: String,
     pub log_file: Option<String>,
     pub log_level: Option<String>,
@@ -58,6 +60,22 @@ pub struct SenderConfig {
     pub username: String,
     pub password: String,
     pub use_tls: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum NotificationConfig {
+    #[serde(rename = "telegram")]
+    Telegram { chat_id: String, token: String },
+    #[serde(rename = "file")]
+    File { file_path: String },
+    #[serde(rename = "email")]
+    Email {
+        smtp_host: String,
+        smtp_port: u16,
+        smtp_username: String,
+        smtp_password: String,
+    },
 }
 
 // Default check interval in seconds (5 minutes)

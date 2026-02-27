@@ -1,8 +1,24 @@
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: pop3_receiver.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 15:38:23
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-27 16:30:59
+ */
+
 use crate::config::ReceiverConfig;
 use crate::traits::{Email, MailReceiver};
 use async_trait::async_trait;
 use pop3::{Pop3Connection, Pop3ConnectionFactory, Pop3MessageInfo};
 use std::sync::Arc;
+
+use std::collections::HashSet;
 
 #[cfg_attr(test, mockall::automock)]
 pub trait Pop3Client: Send + Sync {
@@ -92,9 +108,10 @@ impl Pop3Receiver {
 
 #[async_trait]
 impl MailReceiver for Pop3Receiver {
-    async fn fetch_emails(&mut self) -> anyhow::Result<Vec<Email>> {
+    async fn fetch_emails(&mut self, seen_ids: &HashSet<String>) -> anyhow::Result<Vec<Email>> {
         let config = self.config.clone();
         let factory = self.factory.clone();
+        let seen_ids_clone = seen_ids.clone();
 
         tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Email>> {
             let mut client = factory.create(&config)?;
@@ -105,6 +122,10 @@ impl MailReceiver for Pop3Receiver {
                 let uid = client
                     .get_unique_id(msg.message_id)
                     .unwrap_or_else(|_| msg.message_id.to_string());
+
+                if seen_ids_clone.contains(&uid) {
+                    continue;
+                }
 
                 let mut content = Vec::new();
                 client.retrieve(msg.message_id, &mut content)?;
@@ -138,6 +159,44 @@ impl MailReceiver for Pop3Receiver {
             }
 
             Err(anyhow::anyhow!("Message with ID {} not found", target_uid))
+        })
+        .await?
+    }
+
+    async fn delete_emails(&mut self, ids: &[String]) -> anyhow::Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let config = self.config.clone();
+        let target_uids = ids.to_vec();
+        let factory = self.factory.clone();
+
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut client = factory.create(&config)?;
+            let list = client.list()?;
+
+            let mut deleted_count = 0;
+            for msg in list {
+                let uid = client
+                    .get_unique_id(msg.message_id)
+                    .unwrap_or_else(|_| msg.message_id.to_string());
+
+                if target_uids.contains(&uid) {
+                    client.delete(msg.message_id)?;
+                    deleted_count += 1;
+                }
+            }
+
+            if deleted_count < target_uids.len() {
+                log::warn!(
+                    "Only deleted {} out of {} requested messages",
+                    deleted_count,
+                    target_uids.len()
+                );
+            }
+
+            Ok(())
         })
         .await?
     }
@@ -211,7 +270,8 @@ mod pop3_receiver_tests {
         });
 
         let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
-        let emails = receiver.fetch_emails().await.unwrap();
+        let seen_ids = HashSet::new();
+        let emails = receiver.fetch_emails(&seen_ids).await.unwrap();
 
         assert_eq!(emails.len(), 2);
         assert_eq!(emails[0].id, "uid1");
@@ -268,7 +328,8 @@ mod pop3_receiver_tests {
 
         let mut receiver = Pop3Receiver::new(config);
 
-        let result = receiver.fetch_emails().await;
+        let seen_ids = HashSet::new();
+        let result = receiver.fetch_emails(&seen_ids).await;
 
         match &result {
             Ok(emails) => println!("Successfully fetched {} emails", emails.len()),
@@ -288,7 +349,8 @@ mod pop3_receiver_tests {
             .returning(|_| Err(anyhow::anyhow!("Connection failed")));
 
         let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
-        let result = receiver.fetch_emails().await;
+        let seen_ids = HashSet::new();
+        let result = receiver.fetch_emails(&seen_ids).await;
 
         assert!(result.is_err());
     }

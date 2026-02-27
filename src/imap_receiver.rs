@@ -1,3 +1,17 @@
+/*!
+ * Copyright (c) 2026 Ming Lyu, aka mingcheng
+ *
+ * This source code is licensed under the MIT License,
+ * which is located in the LICENSE file in the source tree's root directory.
+ *
+ * File: imap_receiver.rs
+ * Author: mingcheng <mingcheng@apache.org>
+ * File Created: 2026-02-12 22:39:30
+ *
+ * Modified By: mingcheng <mingcheng@apache.org>
+ * Last Modified: 2026-02-27 16:30:43
+ */
+
 use crate::config::ReceiverConfig;
 use crate::traits::{Email, MailReceiver};
 use async_imap::Session;
@@ -6,6 +20,8 @@ use async_trait::async_trait;
 use futures::{StreamExt, pin_mut};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
+
+use std::collections::HashSet;
 
 type ImapSession = Session<TlsStream<Compat<TcpStream>>>;
 
@@ -40,7 +56,10 @@ impl ImapReceiver {
         Ok(session)
     }
 
-    async fn fetch_emails_internal(&self) -> anyhow::Result<Vec<Email>> {
+    async fn fetch_emails_internal(
+        &self,
+        seen_ids: &HashSet<String>,
+    ) -> anyhow::Result<Vec<Email>> {
         let mut session = self.connect().await?;
 
         // Select the mailbox (default: INBOX)
@@ -58,23 +77,37 @@ impl ImapReceiver {
 
         let mut emails = Vec::new();
 
-        for seq_num in search_result.iter() {
-            // Fetch the message
-            let mut fetch_stream = session
-                .fetch(seq_num.to_string(), "RFC822")
+        let seq_nums: Vec<String> = search_result.iter().map(|n| n.to_string()).collect();
+        if seq_nums.is_empty() {
+            // Logout
+            session
+                .logout()
                 .await
-                .map_err(|e| anyhow::anyhow!("Fetch failed for message {}: {}", seq_num, e))?;
+                .map_err(|e| anyhow::anyhow!("Logout failed: {}", e))?;
+            return Ok(emails);
+        }
+
+        let sequence_set = seq_nums.join(",");
+
+        // Fetch all unseen messages in one command
+        {
+            let mut fetch_stream = session
+                .fetch(sequence_set, "RFC822")
+                .await
+                .map_err(|e| anyhow::anyhow!("Fetch failed for messages: {}", e))?;
 
             while let Some(fetch_result) = fetch_stream.next().await {
                 let message = fetch_result
                     .map_err(|e| anyhow::anyhow!("Error reading fetch result: {}", e))?;
 
                 if let Some(body) = message.body() {
-                    let id = format!("{}", seq_num);
-                    emails.push(Email {
-                        id,
-                        content: body.to_vec(),
-                    });
+                    let id = format!("{}", message.message);
+                    if !seen_ids.contains(&id) {
+                        emails.push(Email {
+                            id,
+                            content: body.to_vec(),
+                        });
+                    }
                 }
             }
         }
@@ -91,8 +124,8 @@ impl ImapReceiver {
 
 #[async_trait]
 impl MailReceiver for ImapReceiver {
-    async fn fetch_emails(&mut self) -> anyhow::Result<Vec<Email>> {
-        self.fetch_emails_internal().await
+    async fn fetch_emails(&mut self, seen_ids: &HashSet<String>) -> anyhow::Result<Vec<Email>> {
+        self.fetch_emails_internal(seen_ids).await
     }
 
     async fn delete_email(&mut self, id: &str) -> anyhow::Result<()> {
@@ -110,6 +143,54 @@ impl MailReceiver for ImapReceiver {
                 .store(id, "+FLAGS (\\Deleted)")
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to mark message {} as deleted: {}", id, e))?;
+            pin_mut!(store_stream);
+
+            // Consume the stream
+            while store_stream.next().await.is_some() {}
+        }
+
+        // Expunge to permanently delete
+        {
+            let expunge_stream = session
+                .expunge()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to expunge: {}", e))?;
+            pin_mut!(expunge_stream);
+
+            // Consume the stream
+            while expunge_stream.next().await.is_some() {}
+        }
+
+        // Logout
+        session
+            .logout()
+            .await
+            .map_err(|e| anyhow::anyhow!("Logout failed: {}", e))?;
+
+        Ok(())
+    }
+
+    async fn delete_emails(&mut self, ids: &[String]) -> anyhow::Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut session = self.connect().await?;
+
+        let mailbox = &self.config.imap_folder;
+        session
+            .select(mailbox)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to select mailbox {}: {}", mailbox, e))?;
+
+        let sequence_set = ids.join(",");
+
+        // Mark the messages as deleted
+        {
+            let store_stream = session
+                .store(sequence_set, "+FLAGS (\\Deleted)")
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to mark messages as deleted: {}", e))?;
             pin_mut!(store_stream);
 
             // Consume the stream
@@ -167,7 +248,8 @@ mod imap_receiver_tests {
 
         let mut receiver = ImapReceiver::new(config);
 
-        let result = receiver.fetch_emails().await;
+        let seen_ids = HashSet::new();
+        let result = receiver.fetch_emails(&seen_ids).await;
 
         match &result {
             Ok(emails) => println!("Successfully fetched {} emails", emails.len()),

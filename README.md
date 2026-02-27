@@ -2,17 +2,15 @@
 
 A lightweight tool to forward emails from POP3/IMAP accounts to a specified SMTP destination written in Rust. 
 
-Gmail DOES NOT support POP3 or Gmailify for the forwarding email from third-party mail services, for more details, please refer to the [official Gmail documentation](https://support.google.com/mail/answer/16604719). 
-
-So, I wrote this tool to forward emails from POP3/IMAP accounts to a specified SMTP destination, which can be used with Gmail or any other email service that supports SMTP.
+Gmail DOES NOT support POP3 or Gmailify for the forwarding email from third-party mail services, for more details, please refer to the [official Gmail documentation](https://support.google.com/mail/answer/16604719). So, I wrote this tool to forward emails from POP3/IMAP accounts to a specified SMTP destination, which can be used with Gmail or any other email service that supports SMTP.
 
 ## Features
 
 - Support for **POP3** and **IMAP** protocols.
 - Monitor multiple email accounts simultaneously.
 - TLS/SSL support.
+- Send notifications on successful forwarding via Telegram, file logging, or email.
 - Configurable check intervals (in seconds).
-
 
 ## Run with Docker(recommended)
 
@@ -53,6 +51,23 @@ Create a `config.toml` file in the working directory:
 ```toml
 # Destination email address
 forward_to = "target@example.com"
+
+# Optional: Notifications when an email is successfully forwarded
+[[notifications]]
+type = "telegram"
+chat_id = "your_telegram_chat_id"
+token = "your_telegram_bot_token"
+
+[[notifications]]
+type = "file"
+file_path = "forwarding_log.txt"
+
+[[notifications]]
+type = "email"
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "your_email@gmail.com"
+smtp_password = "your_email_password"
 
 # SMTP Sender Configuration (for sending forwarded emails)
 [sender]
