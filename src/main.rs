@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 15:38:23
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-27 16:23:51
+ * Last Modified: 2026-03-06 17:57:59
  */
 
 mod config;
@@ -34,10 +34,12 @@ use tokio::signal;
 use tokio::sync::broadcast;
 use traits::{MailReceiver, MailSender, Notification};
 
+// A simple writer that duplicates writes to multiple underlying writers.
 struct MultiWriter {
     writers: Vec<Box<dyn Write + Send + 'static>>,
 }
 
+// Implement the Write trait for MultiWriter to forward writes to all underlying writers.
 impl Write for MultiWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         for w in &mut self.writers {
@@ -61,9 +63,11 @@ struct Args {
     config: Option<String>,
 }
 
+// Initializes the logger based on the provided configuration.
 fn initialize_logger(config: &AppConfig) -> anyhow::Result<()> {
     let mut builder = env_logger::Builder::new();
 
+    // Determine log level: config > RUST_LOG env var > default to INFO
     if let Some(level) = &config.log_level {
         builder.parse_filters(level);
     } else if let Ok(env_level) = std::env::var("RUST_LOG") {
@@ -72,6 +76,7 @@ fn initialize_logger(config: &AppConfig) -> anyhow::Result<()> {
         builder.filter_level(log::LevelFilter::Info);
     }
 
+    // If a log file is specified, write logs to that file. If quiet mode is enabled, only write to the file and not stderr.
     if let Some(log_file) = &config.log_file {
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -135,6 +140,7 @@ async fn process_emails(ctx: &mut ProcessContext<'_>, emails: Vec<traits::Email>
 
         info!("[{}] Processing new email ID: {}", ctx.username, email.id);
 
+        // Attempt to forward the email. If successful, mark it for deletion and notification.
         match ctx.sender.send_email(&email, ctx.forward_to).await {
             Ok(_) => {
                 info!(
@@ -269,6 +275,7 @@ async fn run_receiver_task(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Ensure the Rustls crypto provider is initialized before any async tasks start.
     let _ = crypto::ring::default_provider().install_default();
 
     let args = Args::parse();
