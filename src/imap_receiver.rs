@@ -225,10 +225,10 @@ mod imap_receiver_tests {
 
     fn get_test_config() -> ReceiverConfig {
         ReceiverConfig {
-            host: "outlook.office365.com".to_string(),
+            host: "imap.example.com".to_string(),
             port: 993,
-            username: "mingcheng@outlook.com".to_string(),
-            password: "lxmgtivelvpdsruq".to_string(),
+            username: "test_user".to_string(),
+            password: "test_pass".to_string(),
             protocol: "imap".to_string(),
             use_tls: Some(true),
             check_interval_seconds: Some(60),
@@ -258,5 +258,13 @@ mod imap_receiver_tests {
 
         // With test credentials, we expect this to fail
         // In real usage with proper credentials, it should succeed
+    }
+
+    #[test]
+    fn test_imap_receiver_uses_configured_folder() {
+        let mut config = get_test_config();
+        config.imap_folder = "Archive".to_string();
+        let receiver = ImapReceiver::new(config);
+        assert_eq!(receiver.config.imap_folder, "Archive");
     }
 }

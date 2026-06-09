@@ -46,11 +46,22 @@ then run the binary if you have configured the `config.toml` file.
 
 ## Configuration
 
-Create a `config.toml` file in the working directory:
+By default the application loads its configuration from `/etc/mail-forwarder/config.toml`.
+You can point it at any other location with the `--config` flag (see [Usage](#usage)).
+Create a `config.toml` file with the following content:
 
 ```toml
 # Destination email address
 forward_to = "target@example.com"
+
+# Optional: Logging configuration
+# log_level accepts the same syntax as the RUST_LOG environment variable
+# (e.g. "info", "debug", "mail_forwarder=debug"). Defaults to "info".
+log_level = "info"
+# Optional: write logs to a file (in addition to stderr).
+log_file = "mail-forwarder.log"
+# Optional: when true, suppress stderr output (only the log file, if any, is written).
+quiet = false
 
 # Optional: Notifications when an email is successfully forwarded
 [[notifications]]
@@ -100,6 +111,27 @@ check_interval_seconds = 60
 ```
 
 > **Note**: For services like Gmail or Outlook, please use an **App Password** instead of your login password for the security reasons. You can generate an App Password in your email account settings.
+
+### Configuration reference
+
+| Field                                           | Scope     | Required | Default | Description                                                               |
+| ----------------------------------------------- | --------- | -------- | ------- | ------------------------------------------------------------------------- |
+| `forward_to`                                    | top-level | yes      | –       | Destination address that all fetched emails are forwarded to.             |
+| `log_level`                                     | top-level | no       | `info`  | Log verbosity, using `RUST_LOG` syntax. Overrides the `RUST_LOG` env var. |
+| `log_file`                                      | top-level | no       | –       | Path to a log file; logs are written there in addition to stderr.         |
+| `quiet`                                         | top-level | no       | `false` | Suppress stderr output (only the log file is written, if configured).     |
+| `sender.host` / `sender.port`                   | sender    | yes      | –       | SMTP server used to send forwarded emails.                                |
+| `sender.username` / `sender.password`           | sender    | yes      | –       | SMTP credentials. The username is also used as the envelope sender.       |
+| `sender.use_tls`                                | sender    | no       | `true`  | Use an implicit TLS (wrapper) connection.                                 |
+| `receivers[].protocol`                          | receiver  | no       | `pop3`  | `pop3` or `imap`.                                                         |
+| `receivers[].host` / `receivers[].port`         | receiver  | yes      | –       | Source mail server.                                                       |
+| `receivers[].username` / `receivers[].password` | receiver  | yes      | –       | Source account credentials.                                               |
+| `receivers[].use_tls`                           | receiver  | no       | `true`  | Use a TLS connection to the source server.                                |
+| `receivers[].check_interval_seconds`            | receiver  | no       | `300`   | Poll interval in seconds (minimum enforced value is `10`).                |
+| `receivers[].delete_after_forward`              | receiver  | no       | `false` | Delete emails from the source server after a successful forward.          |
+| `receivers[].imap_folder`                       | receiver  | no       | `INBOX` | IMAP mailbox to monitor (ignored for POP3).                               |
+
+> **Note**: When `delete_after_forward` is `false`, forwarded message IDs are tracked in memory only. For POP3, restarting the program may re-forward existing messages; IMAP avoids this by fetching only `UNSEEN` messages.
 
 ## Usage
 

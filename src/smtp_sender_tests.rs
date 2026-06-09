@@ -81,6 +81,82 @@ async fn test_send_email_factory_error() {
 }
 
 #[tokio::test]
+async fn test_send_email_invalid_target_address() {
+    let config = test_sender_config();
+
+    let mut mock_factory = MockSmtpMailerFactory::new();
+    mock_factory.expect_create().returning(|_| {
+        let mut mock_mailer = MockSmtpMailer::new();
+        // The send must never be reached when the target address is invalid.
+        mock_mailer.expect_send().never();
+        Ok(Box::new(mock_mailer))
+    });
+
+    let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
+    let email = Email {
+        id: "1".to_string(),
+        content: b"Subject: Test".to_vec(),
+    };
+
+    let result = sender.send_email(&email, "not-a-valid-address").await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_send_email_prepends_tracking_headers() {
+    let config = test_sender_config();
+
+    let mut mock_factory = MockSmtpMailerFactory::new();
+    mock_factory.expect_create().returning(|_| {
+        let mut mock_mailer = MockSmtpMailer::new();
+        mock_mailer
+            .expect_send()
+            .times(1)
+            .withf(|_, content| {
+                let content_str = String::from_utf8_lossy(content);
+                content_str.contains("X-Forwarded-By: mail-forwarder")
+                    && content_str.contains("X-Original-Message-ID: original-42")
+                    && content_str.contains("X-Forwarded-Time: ")
+                    && content_str.contains("Subject: Existing Content")
+            })
+            .returning(|_, _| Ok(()));
+        Ok(Box::new(mock_mailer))
+    });
+
+    let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
+    let email = Email {
+        id: "original-42".to_string(),
+        content: b"Subject: Existing Content".to_vec(),
+    };
+
+    let result = sender.send_email(&email, "target@example.com").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_mailer_initialized_only_once() {
+    let config = test_sender_config();
+
+    let mut mock_factory = MockSmtpMailerFactory::new();
+    // The factory must be called exactly once even across multiple sends,
+    // since the mailer is cached in a OnceCell.
+    mock_factory.expect_create().times(1).returning(|_| {
+        let mut mock_mailer = MockSmtpMailer::new();
+        mock_mailer.expect_send().times(2).returning(|_, _| Ok(()));
+        Ok(Box::new(mock_mailer))
+    });
+
+    let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
+    let email = Email {
+        id: "1".to_string(),
+        content: b"Subject: Test".to_vec(),
+    };
+
+    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
+    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
+}
+
+#[tokio::test]
 async fn test_real_smtp_send() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 

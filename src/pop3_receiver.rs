@@ -354,4 +354,160 @@ mod pop3_receiver_tests {
 
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_fetch_emails_skips_seen_ids() {
+        let config = get_test_config();
+
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory.expect_create().returning(|_| {
+            let mut mock_client = MockPop3Client::new();
+
+            mock_client.expect_list().returning(|| {
+                Ok(vec![
+                    Pop3MessageInfo {
+                        message_id: 1,
+                        message_size: 100,
+                    },
+                    Pop3MessageInfo {
+                        message_id: 2,
+                        message_size: 200,
+                    },
+                ])
+            });
+
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(1))
+                .returning(|_| Ok("uid1".to_string()));
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(2))
+                .returning(|_| Ok("uid2".to_string()));
+
+            // Only message 2 should be retrieved, since uid1 is already seen.
+            mock_client
+                .expect_retrieve()
+                .with(eq(2), always())
+                .returning(|_, buf| {
+                    buf.extend_from_slice(b"email2");
+                    Ok(())
+                });
+
+            Ok(Box::new(mock_client))
+        });
+
+        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+        let mut seen_ids = HashSet::new();
+        seen_ids.insert("uid1".to_string());
+
+        let emails = receiver.fetch_emails(&seen_ids).await.unwrap();
+
+        assert_eq!(emails.len(), 1);
+        assert_eq!(emails[0].id, "uid2");
+        assert_eq!(emails[0].content, b"email2");
+    }
+
+    #[tokio::test]
+    async fn test_delete_emails_multiple() {
+        let config = get_test_config();
+
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory.expect_create().returning(|_| {
+            let mut mock_client = MockPop3Client::new();
+
+            mock_client.expect_list().returning(|| {
+                Ok(vec![
+                    Pop3MessageInfo {
+                        message_id: 1,
+                        message_size: 100,
+                    },
+                    Pop3MessageInfo {
+                        message_id: 2,
+                        message_size: 200,
+                    },
+                    Pop3MessageInfo {
+                        message_id: 3,
+                        message_size: 300,
+                    },
+                ])
+            });
+
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(1))
+                .returning(|_| Ok("uid1".to_string()));
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(2))
+                .returning(|_| Ok("uid2".to_string()));
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(3))
+                .returning(|_| Ok("uid3".to_string()));
+
+            // Only uid1 and uid3 are requested for deletion.
+            mock_client
+                .expect_delete()
+                .with(eq(1))
+                .returning(|_| Ok(()));
+            mock_client
+                .expect_delete()
+                .with(eq(3))
+                .returning(|_| Ok(()));
+
+            Ok(Box::new(mock_client))
+        });
+
+        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+        let ids = vec!["uid1".to_string(), "uid3".to_string()];
+        receiver
+            .delete_emails(&ids)
+            .await
+            .expect("Delete should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_delete_emails_empty_is_noop() {
+        let config = get_test_config();
+
+        // Factory must never be invoked when the id list is empty.
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory.expect_create().never();
+
+        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+        receiver
+            .delete_emails(&[])
+            .await
+            .expect("Deleting an empty list should be a no-op");
+    }
+
+    #[tokio::test]
+    async fn test_delete_email_not_found() {
+        let config = get_test_config();
+
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory.expect_create().returning(|_| {
+            let mut mock_client = MockPop3Client::new();
+
+            mock_client.expect_list().returning(|| {
+                Ok(vec![Pop3MessageInfo {
+                    message_id: 1,
+                    message_size: 100,
+                }])
+            });
+
+            mock_client
+                .expect_get_unique_id()
+                .with(eq(1))
+                .returning(|_| Ok("uid1".to_string()));
+
+            Ok(Box::new(mock_client))
+        });
+
+        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+        let result = receiver.delete_email("nonexistent").await;
+
+        assert!(result.is_err());
+    }
 }

@@ -233,4 +233,62 @@ mod tests {
             .try_deserialize();
         assert!(res.is_err());
     }
+
+    #[test]
+    fn test_missing_required_field() {
+        // `forward_to` is required but absent here.
+        let toml_str = r#"
+            [sender]
+            host = "h"
+            port = 1
+            username = "u"
+            password = "p"
+
+            [[receivers]]
+            host = "r"
+            port = 1
+            username = "u"
+            password = "p"
+        "#;
+
+        let res: Result<AppConfig, _> = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize();
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_default_protocol_and_imap_folder() {
+        // Neither `protocol` nor `imap_folder` is set, so defaults apply.
+        let toml_str = r#"
+            forward_to = "t"
+
+            [sender]
+            host = "h"
+            port = 1
+            username = "u"
+            password = "p"
+
+            [[receivers]]
+            host = "r"
+            port = 1
+            username = "u"
+            password = "p"
+        "#;
+
+        let config: AppConfig = Config::builder()
+            .add_source(File::from_str(toml_str, FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+
+        let receiver = &config.receivers[0];
+        assert_eq!(receiver.protocol, "pop3");
+        assert_eq!(receiver.imap_folder, "INBOX");
+        assert!(!config.quiet);
+        assert!(config.notifications.is_empty());
+    }
 }
