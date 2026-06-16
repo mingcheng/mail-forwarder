@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 22:37:25
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-27 16:31:05
+ * Last Modified: 2026-06-16 21:03:47
  */
 
 use crate::config::SenderConfig;
@@ -40,6 +40,7 @@ async fn test_send_email_success() {
             .withf(|envelope, content| {
                 let content_str = String::from_utf8_lossy(content);
                 content_str.starts_with("X-Forwarded-By: mail-forwarder")
+                    && content_str.contains("X-Signed-By: mail-forwarder")
                     && envelope
                         .from()
                         .is_some_and(|s| s.to_string() == "sender@test.com")
@@ -115,6 +116,7 @@ async fn test_send_email_prepends_tracking_headers() {
             .withf(|_, content| {
                 let content_str = String::from_utf8_lossy(content);
                 content_str.contains("X-Forwarded-By: mail-forwarder")
+                    && content_str.contains("X-Signed-By: mail-forwarder 1.2.2")
                     && content_str.contains("X-Original-Message-ID: original-42")
                     && content_str.contains("X-Forwarded-Time: ")
                     && content_str.contains("Subject: Existing Content")
@@ -152,8 +154,18 @@ async fn test_mailer_initialized_only_once() {
         content: b"Subject: Test".to_vec(),
     };
 
-    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
-    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
+    assert!(
+        sender
+            .send_email(&email, "target@example.com")
+            .await
+            .is_ok()
+    );
+    assert!(
+        sender
+            .send_email(&email, "target@example.com")
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]

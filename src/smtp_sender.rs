@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 22:37:25
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-27 16:31:17
+ * Last Modified: 2026-06-16 21:03:11
  */
 
 use crate::config::SenderConfig;
@@ -128,7 +128,17 @@ impl MailSender for SmtpSender {
         let mut final_content = Vec::with_capacity(email.content.len() + 32);
 
         // Add custom headers
-        final_content.extend_from_slice(b"X-Forwarded-By: mail-forwarder\r\n");
+        final_content.extend_from_slice(b"X-Forwarded-By: ");
+        final_content.extend_from_slice(
+            concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION")).as_bytes(),
+        );
+        final_content.extend_from_slice(b"\r\n");
+
+        final_content.extend_from_slice(b"X-Signed-By: ");
+        final_content.extend_from_slice(
+            concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION")).as_bytes(),
+        );
+        final_content.extend_from_slice(b"\r\n");
 
         final_content.extend_from_slice(b"X-Original-Message-ID: ");
         final_content.extend_from_slice(email.id.as_bytes());

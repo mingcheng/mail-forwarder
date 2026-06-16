@@ -1,6 +1,6 @@
 [package]
 name = "mail-forwarder"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2024"
 
 [dependencies]
@@ -14,16 +14,16 @@ lettre = { version = "0.11", default-features = false, features = [
     "builder",
     "smtp-transport",
 ] }
-mail-parser = "0.9"
+mail-parser = "0.11"
 serde = { version = "1", features = ["derive"] }
-config = "0.13"
+config = "0.15"
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 tokio-socks = "0.5" # For async proxy (SMTP)
 socks = "0.3" # For blocking proxy (POP3)
 pop3 = { package = "rust-pop3-client", version = "0.3.0" }
-async-imap = "0.10"
-async-native-tls = "0.5"
+async-imap = "0.11"
+async-native-tls = "0.6"
 futures = "0.3"
 clap = { version = "4.6.1", features = ["derive"] }
 rustls = "0.23.40"
