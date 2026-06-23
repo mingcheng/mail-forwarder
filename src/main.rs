@@ -34,6 +34,27 @@ use tokio::signal;
 use tokio::sync::broadcast;
 use traits::{MailReceiver, MailSender, Notification};
 
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
+    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+    let mut sigquit = signal::unix::signal(signal::unix::SignalKind::quit())?;
+
+    tokio::select! {
+        result = signal::ctrl_c() => {
+            result?;
+            Ok("SIGINT/Ctrl+C")
+        }
+        _ = sigterm.recv() => Ok("SIGTERM"),
+        _ = sigquit.recv() => Ok("SIGQUIT"),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
+    signal::ctrl_c().await?;
+    Ok("Ctrl+C")
+}
+
 // A simple writer that duplicates writes to multiple underlying writers.
 struct MultiWriter {
     writers: Vec<Box<dyn Write + Send + 'static>>,
@@ -253,7 +274,15 @@ async fn run_receiver_task(
             _ = ticker.tick() => {}
         }
 
-        match receiver.fetch_emails(&seen_ids).await {
+        let fetch_result = tokio::select! {
+            result = receiver.fetch_emails(&seen_ids) => result,
+            _ = shutdown_rx.recv() => {
+                info!("[{}] Received shutdown signal while fetching emails. Stopping task...", username);
+                break;
+            }
+        };
+
+        match fetch_result {
             Ok(emails) => {
                 let mut ctx = ProcessContext {
                     username: &username,
@@ -323,8 +352,11 @@ async fn main() -> anyhow::Result<()> {
         handles.push(handle);
     }
 
-    match signal::ctrl_c().await {
-        Ok(()) => warn!("Shutdown signal received (Ctrl+C). Notifying tasks..."),
+    match wait_for_shutdown_signal().await {
+        Ok(signal_name) => warn!(
+            "Shutdown signal received ({}). Notifying tasks...",
+            signal_name
+        ),
         Err(err) => error!("Unable to listen for shutdown signal: {}", err),
     }
 
