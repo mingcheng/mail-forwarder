@@ -1,7 +1,8 @@
 [package]
 name = "mail-forwarder"
-version = "1.2.1"
+version = "1.2.3"
 edition = "2024"
+rust-version = "1.96"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -14,19 +15,19 @@ lettre = { version = "0.11", default-features = false, features = [
     "builder",
     "smtp-transport",
 ] }
-mail-parser = "0.9"
+mail-parser = "0.11"
 serde = { version = "1", features = ["derive"] }
-config = "0.13"
+config = "0.15"
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 tokio-socks = "0.5" # For async proxy (SMTP)
 socks = "0.3" # For blocking proxy (POP3)
 pop3 = { package = "rust-pop3-client", version = "0.3.0" }
-async-imap = "0.10"
-async-native-tls = "0.5"
+async-imap = "0.11"
+async-native-tls = "0.6"
 futures = "0.3"
 clap = { version = "4.6.1", features = ["derive"] }
-rustls = "0.23.40"
+rustls = "0.23.41"
 chrono = "0.4.45"
 reqwest = { version = "0.13.4", features = ["json"] }
 serde_json = "1.0.150"
@@ -34,4 +35,4 @@ serde_json = "1.0.150"
 [dev-dependencies]
 mockall = "0.14.0"
 mockito = "1.7.2"
-rustls = { version = "0.23.40", features = ["ring"] }
+rustls = { version = "0.23.41", features = ["ring"] }

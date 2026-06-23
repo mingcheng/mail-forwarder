@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 22:37:25
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-27 16:31:17
+ * Last Modified: 2026-06-16 21:03:11
  */
 
 use crate::config::SenderConfig;
@@ -21,6 +21,8 @@ use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
+
+const APP_SIGNATURE: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -113,30 +115,35 @@ impl SmtpSender {
         Envelope::new(Some(sender_addr), vec![target_addr])
             .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))
     }
+
+    fn append_header(content: &mut Vec<u8>, name: &str, value: &str) {
+        content.extend_from_slice(name.as_bytes());
+        content.extend_from_slice(b": ");
+        content.extend_from_slice(value.as_bytes());
+        content.extend_from_slice(b"\r\n");
+    }
 }
 
 #[async_trait]
 impl MailSender for SmtpSender {
     async fn send_email(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
+        let envelope = self.create_envelope(target_address)?;
+
         let mailer = self
             .mailer
             .get_or_try_init(|| async { self.factory.create(&self.config) })
             .await?;
 
-        let envelope = self.create_envelope(target_address)?;
-
         let mut final_content = Vec::with_capacity(email.content.len() + 32);
 
-        // Add custom headers
-        final_content.extend_from_slice(b"X-Forwarded-By: mail-forwarder\r\n");
-
-        final_content.extend_from_slice(b"X-Original-Message-ID: ");
-        final_content.extend_from_slice(email.id.as_bytes());
-        final_content.extend_from_slice(b"\r\n");
-
-        final_content.extend_from_slice(b"X-Forwarded-Time: ");
-        final_content.extend_from_slice(chrono::Utc::now().to_rfc3339().as_bytes());
-        final_content.extend_from_slice(b"\r\n");
+        Self::append_header(&mut final_content, "X-Forwarded-By", APP_SIGNATURE);
+        Self::append_header(&mut final_content, "X-Signed-By", APP_SIGNATURE);
+        Self::append_header(&mut final_content, "X-Original-Message-ID", &email.id);
+        Self::append_header(
+            &mut final_content,
+            "X-Forwarded-Time",
+            &chrono::Utc::now().to_rfc3339(),
+        );
 
         final_content.extend_from_slice(&email.content);
 

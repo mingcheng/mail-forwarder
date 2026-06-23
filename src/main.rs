@@ -34,6 +34,27 @@ use tokio::signal;
 use tokio::sync::broadcast;
 use traits::{MailReceiver, MailSender, Notification};
 
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
+    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+    let mut sigquit = signal::unix::signal(signal::unix::SignalKind::quit())?;
+
+    tokio::select! {
+        result = signal::ctrl_c() => {
+            result?;
+            Ok("SIGINT/Ctrl+C")
+        }
+        _ = sigterm.recv() => Ok("SIGTERM"),
+        _ = sigquit.recv() => Ok("SIGQUIT"),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
+    signal::ctrl_c().await?;
+    Ok("Ctrl+C")
+}
+
 // A simple writer that duplicates writes to multiple underlying writers.
 struct MultiWriter {
     writers: Vec<Box<dyn Write + Send + 'static>>,
@@ -42,16 +63,34 @@ struct MultiWriter {
 // Implement the Write trait for MultiWriter to forward writes to all underlying writers.
 impl Write for MultiWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut first_error = None;
+
         for w in &mut self.writers {
-            let _ = w.write(buf);
+            if let Err(err) = w.write_all(buf) {
+                first_error.get_or_insert(err);
+            }
         }
+
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        let mut first_error = None;
+
         for w in &mut self.writers {
-            let _ = w.flush();
+            if let Err(err) = w.flush() {
+                first_error.get_or_insert(err);
+            }
         }
+
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+
         Ok(())
     }
 }
@@ -253,7 +292,15 @@ async fn run_receiver_task(
             _ = ticker.tick() => {}
         }
 
-        match receiver.fetch_emails(&seen_ids).await {
+        let fetch_result = tokio::select! {
+            result = receiver.fetch_emails(&seen_ids) => result,
+            _ = shutdown_rx.recv() => {
+                info!("[{}] Received shutdown signal while fetching emails. Stopping task...", username);
+                break;
+            }
+        };
+
+        match fetch_result {
             Ok(emails) => {
                 let mut ctx = ProcessContext {
                     username: &username,
@@ -289,7 +336,7 @@ async fn main() -> anyhow::Result<()> {
         if let Ok(path) = std::env::current_dir() {
             eprintln!("Current search path: {:?}", path);
         }
-        eprintln!("Please create a `config.toml` or set APP_... environment variables, or specify a config file with --config.");
+        eprintln!("Please create a config file at the default path or specify one with --config.");
         std::process::exit(1);
     });
 
@@ -323,8 +370,11 @@ async fn main() -> anyhow::Result<()> {
         handles.push(handle);
     }
 
-    match signal::ctrl_c().await {
-        Ok(()) => warn!("Shutdown signal received (Ctrl+C). Notifying tasks..."),
+    match wait_for_shutdown_signal().await {
+        Ok(signal_name) => warn!(
+            "Shutdown signal received ({}). Notifying tasks...",
+            signal_name
+        ),
         Err(err) => error!("Unable to listen for shutdown signal: {}", err),
     }
 

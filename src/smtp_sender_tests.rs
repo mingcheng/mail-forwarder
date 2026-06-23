@@ -9,11 +9,11 @@
  * File Created: 2026-02-12 22:37:25
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-02-27 16:31:05
+ * Last Modified: 2026-06-16 21:03:47
  */
 
 use crate::config::SenderConfig;
-use crate::smtp_sender::{MockSmtpMailer, MockSmtpMailerFactory, SmtpSender};
+use crate::smtp_sender::{APP_SIGNATURE, MockSmtpMailer, MockSmtpMailerFactory, SmtpSender};
 use crate::traits::{Email, MailSender};
 use std::sync::Arc;
 
@@ -40,6 +40,7 @@ async fn test_send_email_success() {
             .withf(|envelope, content| {
                 let content_str = String::from_utf8_lossy(content);
                 content_str.starts_with("X-Forwarded-By: mail-forwarder")
+                    && content_str.contains("X-Signed-By: mail-forwarder")
                     && envelope
                         .from()
                         .is_some_and(|s| s.to_string() == "sender@test.com")
@@ -85,12 +86,7 @@ async fn test_send_email_invalid_target_address() {
     let config = test_sender_config();
 
     let mut mock_factory = MockSmtpMailerFactory::new();
-    mock_factory.expect_create().returning(|_| {
-        let mut mock_mailer = MockSmtpMailer::new();
-        // The send must never be reached when the target address is invalid.
-        mock_mailer.expect_send().never();
-        Ok(Box::new(mock_mailer))
-    });
+    mock_factory.expect_create().never();
 
     let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
     let email = Email {
@@ -114,7 +110,8 @@ async fn test_send_email_prepends_tracking_headers() {
             .times(1)
             .withf(|_, content| {
                 let content_str = String::from_utf8_lossy(content);
-                content_str.contains("X-Forwarded-By: mail-forwarder")
+                content_str.contains(&format!("X-Forwarded-By: {APP_SIGNATURE}"))
+                    && content_str.contains(&format!("X-Signed-By: {APP_SIGNATURE}"))
                     && content_str.contains("X-Original-Message-ID: original-42")
                     && content_str.contains("X-Forwarded-Time: ")
                     && content_str.contains("Subject: Existing Content")
@@ -152,8 +149,18 @@ async fn test_mailer_initialized_only_once() {
         content: b"Subject: Test".to_vec(),
     };
 
-    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
-    assert!(sender.send_email(&email, "target@example.com").await.is_ok());
+    assert!(
+        sender
+            .send_email(&email, "target@example.com")
+            .await
+            .is_ok()
+    );
+    assert!(
+        sender
+            .send_email(&email, "target@example.com")
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]

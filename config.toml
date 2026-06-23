@@ -1,6 +1,5 @@
 # General Settings
 forward_to = "destination@example.com"
-check_interval_seconds = 60
 
 [[notifications]]
 type = "telegram"
