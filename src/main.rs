@@ -63,16 +63,34 @@ struct MultiWriter {
 // Implement the Write trait for MultiWriter to forward writes to all underlying writers.
 impl Write for MultiWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut first_error = None;
+
         for w in &mut self.writers {
-            let _ = w.write(buf);
+            if let Err(err) = w.write_all(buf) {
+                first_error.get_or_insert(err);
+            }
         }
+
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        let mut first_error = None;
+
         for w in &mut self.writers {
-            let _ = w.flush();
+            if let Err(err) = w.flush() {
+                first_error.get_or_insert(err);
+            }
         }
+
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+
         Ok(())
     }
 }
@@ -318,7 +336,7 @@ async fn main() -> anyhow::Result<()> {
         if let Ok(path) = std::env::current_dir() {
             eprintln!("Current search path: {:?}", path);
         }
-        eprintln!("Please create a `config.toml` or set APP_... environment variables, or specify a config file with --config.");
+        eprintln!("Please create a config file at the default path or specify one with --config.");
         std::process::exit(1);
     });
 
