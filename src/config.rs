@@ -85,7 +85,7 @@ pub const DEFAULT_CHECK_INTERVAL_SECONDS: u64 = 300;
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/mail-forwarder/config.toml";
 
 impl AppConfig {
-    /// Load config from defaults, then file (if exists), then environment variables
+    /// Load config from the default file path if it exists.
     pub fn new() -> Result<Self, ConfigError> {
         Config::builder()
             .add_source(File::with_name(DEFAULT_CONFIG_PATH).required(false))

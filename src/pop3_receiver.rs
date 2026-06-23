@@ -16,9 +16,8 @@ use crate::config::ReceiverConfig;
 use crate::traits::{Email, MailReceiver};
 use async_trait::async_trait;
 use pop3::{Pop3Connection, Pop3ConnectionFactory, Pop3MessageInfo};
-use std::sync::Arc;
-
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[cfg_attr(test, mockall::automock)]
 pub trait Pop3Client: Send + Sync {
@@ -175,6 +174,7 @@ impl MailReceiver for Pop3Receiver {
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let mut client = factory.create(&config)?;
             let list = client.list()?;
+            let target_uids: HashSet<String> = target_uids.into_iter().collect();
 
             let mut deleted_count = 0;
             for msg in list {
