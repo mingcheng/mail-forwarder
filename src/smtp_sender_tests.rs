@@ -164,6 +164,49 @@ async fn test_mailer_initialized_only_once() {
 }
 
 #[tokio::test]
+async fn test_check_connection_success() {
+    let config = test_sender_config();
+
+    let mut mock_factory = MockSmtpMailerFactory::new();
+    mock_factory.expect_create().times(1).returning(|_| {
+        let mut mock_mailer = MockSmtpMailer::new();
+        mock_mailer
+            .expect_test_connection()
+            .times(1)
+            .returning(|| Ok(true));
+        Ok(Box::new(mock_mailer))
+    });
+
+    let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
+
+    assert!(sender.check_connection().await.is_ok());
+}
+
+#[tokio::test]
+async fn test_check_connection_rejected() {
+    let config = test_sender_config();
+
+    let mut mock_factory = MockSmtpMailerFactory::new();
+    mock_factory.expect_create().times(1).returning(|_| {
+        let mut mock_mailer = MockSmtpMailer::new();
+        mock_mailer
+            .expect_test_connection()
+            .times(1)
+            .returning(|| Ok(false));
+        Ok(Box::new(mock_mailer))
+    });
+
+    let sender = SmtpSender::new_with_factory(config, Arc::new(mock_factory));
+    let result = sender.check_connection().await;
+
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "SMTP server rejected connection test"
+    );
+}
+
+#[tokio::test]
 async fn test_real_smtp_send() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 

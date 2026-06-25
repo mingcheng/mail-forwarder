@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 15:38:23
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-03-06 17:57:59
+ * Last Modified: 2026-06-25 15:34:27
  */
 
 mod config;
@@ -27,12 +27,15 @@ use pop3_receiver::Pop3Receiver;
 use rustls::crypto;
 use smtp_sender::SmtpSender;
 use std::collections::HashSet;
+use std::future::Future;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::broadcast;
 use traits::{MailReceiver, MailSender, Notification};
+
+const ACCOUNT_CHECK_TIMEOUT_SECONDS: u64 = 30;
 
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
@@ -98,8 +101,11 @@ impl Write for MultiWriter {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(short, long)]
+    #[arg(short, long, help = "Path to the configuration file")]
     config: Option<String>,
+
+    #[arg(long, help = "Check the configuration file and account connections")]
+    check: bool,
 }
 
 // Initializes the logger based on the provided configuration.
@@ -136,6 +142,52 @@ fn initialize_logger(config: &AppConfig) -> anyhow::Result<()> {
     }
 
     builder.init();
+    Ok(())
+}
+
+async fn check_account_with_timeout<F>(label: &str, check: F) -> anyhow::Result<()>
+where
+    F: Future<Output = anyhow::Result<()>>,
+{
+    match tokio::time::timeout(Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS), check).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(anyhow::anyhow!("{} check failed: {}", label, e)),
+        Err(_) => Err(anyhow::anyhow!(
+            "{} check timed out after {} seconds",
+            label,
+            ACCOUNT_CHECK_TIMEOUT_SECONDS
+        )),
+    }
+}
+
+async fn check_config(config: &AppConfig) -> anyhow::Result<()> {
+    config
+        .forward_to
+        .parse::<lettre::Address>()
+        .map_err(|e| anyhow::anyhow!("Invalid forward_to address: {}", e))?;
+
+    info!("Checking SMTP sender account {}", config.sender.username);
+    let sender = SmtpSender::new(config.sender.clone());
+    check_account_with_timeout("SMTP sender account", sender.check_connection()).await?;
+
+    notifications::check_email_notification_accounts(
+        &config.notifications,
+        Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS),
+    )
+    .await?;
+
+    for receiver_config in &config.receivers {
+        if receiver_config.protocol == "pop3" {
+            info!(
+                "Checking POP3 receiver account {} at {}:{}",
+                receiver_config.username, receiver_config.host, receiver_config.port
+            );
+            let receiver = Pop3Receiver::new(receiver_config.clone());
+            let label = format!("POP3 receiver account {}", receiver_config.username);
+            check_account_with_timeout(&label, receiver.check_connection()).await?;
+        }
+    }
+
     Ok(())
 }
 
@@ -341,6 +393,19 @@ async fn main() -> anyhow::Result<()> {
     });
 
     initialize_logger(&config)?;
+
+    if args.check {
+        match check_config(&config).await {
+            Ok(()) => {
+                println!("Configuration file and account checks passed.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Configuration check failed: {:?}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     info!("Starting Mail Forwarder...");
     info!("Forwarding to: {}", config.forward_to);

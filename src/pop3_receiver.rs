@@ -103,6 +103,18 @@ impl Pop3Receiver {
     pub fn new_with_factory(config: ReceiverConfig, factory: Arc<dyn Pop3ClientFactory>) -> Self {
         Self { config, factory }
     }
+
+    pub async fn check_connection(&self) -> anyhow::Result<()> {
+        let config = self.config.clone();
+        let factory = self.factory.clone();
+
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut client = factory.create(&config)?;
+            client.list()?;
+            Ok(())
+        })
+        .await?
+    }
 }
 
 #[async_trait]
@@ -480,6 +492,44 @@ mod pop3_receiver_tests {
             .delete_emails(&[])
             .await
             .expect("Deleting an empty list should be a no-op");
+    }
+
+    #[tokio::test]
+    async fn test_check_connection_success() {
+        let config = get_test_config();
+
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory.expect_create().returning(|_| {
+            let mut mock_client = MockPop3Client::new();
+            mock_client
+                .expect_list()
+                .times(1)
+                .returning(|| Ok(Vec::new()));
+            Ok(Box::new(mock_client))
+        });
+
+        let receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+
+        receiver
+            .check_connection()
+            .await
+            .expect("POP3 connection check should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_check_connection_failure() {
+        let config = get_test_config();
+
+        let mut mock_factory = MockPop3ClientFactory::new();
+        mock_factory
+            .expect_create()
+            .returning(|_| Err(anyhow::anyhow!("Connection failed")));
+
+        let receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
+        let result = receiver.check_connection().await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Connection failed");
     }
 
     #[tokio::test]

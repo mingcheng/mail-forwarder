@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use log::{error, info};
 use reqwest::Client;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -146,6 +147,15 @@ impl EmailNotification {
             mailer,
         })
     }
+
+    pub async fn check_connection(&self) -> anyhow::Result<()> {
+        match self.mailer.test_connection().await? {
+            true => Ok(()),
+            false => Err(anyhow::anyhow!(
+                "SMTP notification server rejected connection test"
+            )),
+        }
+    }
 }
 
 #[async_trait]
@@ -202,6 +212,52 @@ pub fn create_notifications(configs: &[NotificationConfig]) -> Vec<Box<dyn Notif
     }
 
     notifications
+}
+
+pub async fn check_email_notification_accounts(
+    configs: &[NotificationConfig],
+    account_timeout: Duration,
+) -> anyhow::Result<()> {
+    for config in configs {
+        if let NotificationConfig::Email {
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+        } = config
+        {
+            info!(
+                "Checking email notification SMTP account {} at {}:{}",
+                smtp_username, smtp_host, smtp_port
+            );
+            let notification = EmailNotification::new(
+                smtp_host.clone(),
+                *smtp_port,
+                smtp_username.clone(),
+                smtp_password.clone(),
+            )?;
+
+            match tokio::time::timeout(account_timeout, notification.check_connection()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Email notification SMTP account {} check failed: {}",
+                        smtp_username,
+                        e
+                    ));
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Email notification SMTP account {} check timed out after {} seconds",
+                        smtp_username,
+                        account_timeout.as_secs()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

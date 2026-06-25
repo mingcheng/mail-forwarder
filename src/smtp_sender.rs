@@ -28,6 +28,7 @@ const APP_SIGNATURE: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG
 #[async_trait]
 pub trait SmtpMailer: Send + Sync {
     async fn send(&self, envelope: Envelope, email: &[u8]) -> anyhow::Result<()>;
+    async fn test_connection(&self) -> anyhow::Result<bool>;
 }
 
 struct RealSmtpMailer {
@@ -42,6 +43,13 @@ impl SmtpMailer for RealSmtpMailer {
             .await
             .map_err(|e| anyhow::anyhow!("SMTP send failed: {}", e))?;
         Ok(())
+    }
+
+    async fn test_connection(&self) -> anyhow::Result<bool> {
+        self.transport
+            .test_connection()
+            .await
+            .map_err(|e| anyhow::anyhow!("SMTP connection test failed: {}", e))
     }
 }
 
@@ -121,6 +129,18 @@ impl SmtpSender {
         content.extend_from_slice(b": ");
         content.extend_from_slice(value.as_bytes());
         content.extend_from_slice(b"\r\n");
+    }
+
+    pub async fn check_connection(&self) -> anyhow::Result<()> {
+        let mailer = self
+            .mailer
+            .get_or_try_init(|| async { self.factory.create(&self.config) })
+            .await?;
+
+        match mailer.test_connection().await? {
+            true => Ok(()),
+            false => Err(anyhow::anyhow!("SMTP server rejected connection test")),
+        }
     }
 }
 
