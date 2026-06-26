@@ -17,7 +17,9 @@ use crate::traits::{Email, Notification};
 use async_trait::async_trait;
 use log::{error, info};
 use reqwest::Client;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -49,16 +51,9 @@ impl TelegramNotification {
             api_url,
         }
     }
-}
 
-#[async_trait]
-impl Notification for TelegramNotification {
-    async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
+    async fn send_message(&self, message: &str) -> anyhow::Result<()> {
         let url = format!("{}/bot{}/sendMessage", self.api_url, self.token);
-        let message = format!(
-            "Email forwarded successfully!\nID: {}\nTarget: {}",
-            email.id, target_address
-        );
 
         let payload = serde_json::json!({
             "chat_id": self.chat_id,
@@ -74,7 +69,47 @@ impl Notification for TelegramNotification {
             return Err(anyhow::anyhow!("Telegram API error: {}", status));
         }
 
+        Ok(())
+    }
+
+    pub async fn send_test_notification(&self, target_address: &str) -> anyhow::Result<()> {
+        let message = format!(
+            "Mail Forwarder configuration check test notification.\nTarget: {}",
+            target_address
+        );
+
+        self.send_message(&message).await?;
+        info!("Telegram test notification sent");
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Notification for TelegramNotification {
+    async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
+        let message = format!(
+            "Email forwarded successfully!\nID: {}\nTarget: {}",
+            email.id, target_address
+        );
+
+        self.send_message(&message).await?;
         info!("Telegram notification sent for email {}", email.id);
+        Ok(())
+    }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let message = format!(
+            "Email forwarding failed after all retry attempts.\nID: {}\nTarget: {}\nError: {}",
+            email.id, target_address, error
+        );
+
+        self.send_message(&message).await?;
+        info!("Telegram failure notification sent for email {}", email.id);
         Ok(())
     }
 }
@@ -93,11 +128,8 @@ impl FileNotification {
             lock: Arc::new(Mutex::new(())),
         }
     }
-}
 
-#[async_trait]
-impl Notification for FileNotification {
-    async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
+    async fn append_log_entry(&self, log_entry: &str) -> anyhow::Result<()> {
         let _guard = self.lock.lock().await;
         let mut file = OpenOptions::new()
             .create(true)
@@ -105,14 +137,51 @@ impl Notification for FileNotification {
             .open(&self.file_path)
             .await?;
 
+        file.write_all(log_entry.as_bytes()).await?;
+        Ok(())
+    }
+
+    pub async fn send_test_notification(&self, target_address: &str) -> anyhow::Result<()> {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let log_entry = format!(
+            "[{}] Configuration check test notification for {}\n",
+            timestamp, target_address
+        );
+
+        self.append_log_entry(&log_entry).await?;
+        info!("File test notification written");
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Notification for FileNotification {
+    async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let log_entry = format!(
             "[{}] Forwarded email ID: {} to {}\n",
             timestamp, email.id, target_address
         );
 
-        file.write_all(log_entry.as_bytes()).await?;
+        self.append_log_entry(&log_entry).await?;
         info!("File notification written for email {}", email.id);
+        Ok(())
+    }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let log_entry = format!(
+            "[{}] Failed to forward email ID: {} to {} after all retry attempts: {}\n",
+            timestamp, email.id, target_address, error
+        );
+
+        self.append_log_entry(&log_entry).await?;
+        info!("File failure notification written for email {}", email.id);
         Ok(())
     }
 }
@@ -146,23 +215,72 @@ impl EmailNotification {
             mailer,
         })
     }
+
+    pub async fn check_connection(&self) -> anyhow::Result<()> {
+        match self.mailer.test_connection().await? {
+            true => Ok(()),
+            false => Err(anyhow::anyhow!(
+                "SMTP notification server rejected connection test"
+            )),
+        }
+    }
+
+    async fn send_plain_text(&self, subject: String, body: String) -> anyhow::Result<()> {
+        let email_message = Message::builder()
+            .from(self.smtp_username.parse()?)
+            .to(self.smtp_username.parse()?)
+            .subject(subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(body)?;
+
+        self.mailer.send(email_message).await?;
+        Ok(())
+    }
+
+    pub async fn send_test_notification(&self, target_address: &str) -> anyhow::Result<()> {
+        self.send_plain_text(
+            "Mail Forwarder configuration check test".to_string(),
+            format!(
+                "This is a Mail Forwarder configuration check test notification for {}.",
+                target_address
+            ),
+        )
+        .await?;
+        info!("Email test notification sent");
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Notification for EmailNotification {
     async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()> {
-        let email_message = Message::builder()
-            .from(self.smtp_username.parse()?)
-            .to(self.smtp_username.parse()?) // Send to self as notification
-            .subject(format!("Notification: Email {} forwarded", email.id))
-            .header(ContentType::TEXT_PLAIN)
-            .body(format!(
+        self.send_plain_text(
+            format!("Notification: Email {} forwarded", email.id),
+            format!(
                 "Email with ID {} was successfully forwarded to {}.",
                 email.id, target_address
-            ))?;
-
-        self.mailer.send(email_message).await?;
+            ),
+        )
+        .await?;
         info!("Email notification sent for email {}", email.id);
+        Ok(())
+    }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        self.send_plain_text(
+            format!("Alert: Email {} forwarding failed", email.id),
+            format!(
+                "Email with ID {} could not be forwarded to {} after all retry attempts.\n\nError: {}",
+                email.id, target_address, error
+            ),
+        )
+        .await?;
+        info!("Email failure notification sent for email {}", email.id);
         Ok(())
     }
 }
@@ -204,6 +322,127 @@ pub fn create_notifications(configs: &[NotificationConfig]) -> Vec<Box<dyn Notif
     notifications
 }
 
+pub async fn check_email_notification_accounts(
+    configs: &[NotificationConfig],
+    account_timeout: Duration,
+) -> anyhow::Result<()> {
+    for config in configs {
+        if let NotificationConfig::Email {
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+        } = config
+        {
+            info!(
+                "Checking email notification SMTP account {} at {}:{}",
+                smtp_username, smtp_host, smtp_port
+            );
+            let notification = EmailNotification::new(
+                smtp_host.clone(),
+                *smtp_port,
+                smtp_username.clone(),
+                smtp_password.clone(),
+            )?;
+
+            match tokio::time::timeout(account_timeout, notification.check_connection()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Email notification SMTP account {} check failed: {}",
+                        smtp_username,
+                        e
+                    ));
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Email notification SMTP account {} check timed out after {} seconds",
+                        smtp_username,
+                        account_timeout.as_secs()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_notification_test_with_timeout<F>(
+    label: &str,
+    timeout: Duration,
+    test: F,
+) -> anyhow::Result<()>
+where
+    F: Future<Output = anyhow::Result<()>>,
+{
+    match tokio::time::timeout(timeout, test).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(anyhow::anyhow!("{} test notification failed: {}", label, e)),
+        Err(_) => Err(anyhow::anyhow!(
+            "{} test notification timed out after {} seconds",
+            label,
+            timeout.as_secs()
+        )),
+    }
+}
+
+pub async fn send_test_notifications(
+    configs: &[NotificationConfig],
+    target_address: &str,
+    notification_timeout: Duration,
+) -> anyhow::Result<()> {
+    for config in configs {
+        match config {
+            NotificationConfig::Telegram { chat_id, token } => {
+                info!("Sending Telegram test notification to chat {}", chat_id);
+                let notification = TelegramNotification::new(chat_id.clone(), token.clone());
+                run_notification_test_with_timeout(
+                    "Telegram",
+                    notification_timeout,
+                    notification.send_test_notification(target_address),
+                )
+                .await?;
+            }
+            NotificationConfig::File { file_path } => {
+                info!("Writing file test notification to {}", file_path);
+                let notification = FileNotification::new(file_path.clone());
+                run_notification_test_with_timeout(
+                    "File",
+                    notification_timeout,
+                    notification.send_test_notification(target_address),
+                )
+                .await?;
+            }
+            NotificationConfig::Email {
+                smtp_host,
+                smtp_port,
+                smtp_username,
+                smtp_password,
+            } => {
+                info!(
+                    "Sending email test notification with SMTP account {} at {}:{}",
+                    smtp_username, smtp_host, smtp_port
+                );
+                let notification = EmailNotification::new(
+                    smtp_host.clone(),
+                    *smtp_port,
+                    smtp_username.clone(),
+                    smtp_password.clone(),
+                )?;
+                run_notification_test_with_timeout(
+                    "Email",
+                    notification_timeout,
+                    notification.send_test_notification(target_address),
+                )
+                .await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +472,52 @@ mod tests {
         assert!(contents.contains("Forwarded email ID: test-email-123 to target@example.com"));
 
         // Clean up
+        let _ = fs::remove_file(&file_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_test_notification() {
+        let temp_dir = env::temp_dir();
+        let file_path = temp_dir.join("test_check_notification.log");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let _ = fs::remove_file(&file_path).await;
+
+        let notification = FileNotification::new(file_path_str.clone());
+        let result = notification
+            .send_test_notification("target@example.com")
+            .await;
+        assert!(result.is_ok());
+
+        let contents = fs::read_to_string(&file_path).await.unwrap();
+        assert!(contents.contains("Configuration check test notification for target@example.com"));
+
+        let _ = fs::remove_file(&file_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_failure_notification() {
+        let temp_dir = env::temp_dir();
+        let file_path = temp_dir.join("test_failure_notification.log");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let _ = fs::remove_file(&file_path).await;
+
+        let notification = FileNotification::new(file_path_str.clone());
+        let email = Email {
+            id: "failed-email-123".to_string(),
+            content: vec![],
+        };
+
+        let result = notification
+            .notify_forward_failure(&email, "target@example.com", "smtp unavailable")
+            .await;
+        assert!(result.is_ok());
+
+        let contents = fs::read_to_string(&file_path).await.unwrap();
+        assert!(contents.contains("Failed to forward email ID: failed-email-123"));
+        assert!(contents.contains("smtp unavailable"));
+
         let _ = fs::remove_file(&file_path).await;
     }
 
