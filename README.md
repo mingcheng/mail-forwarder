@@ -143,11 +143,11 @@ Run the binary:
 # Or with a specific config file
 ./target/release/mail-forwarder --config /path/to/config.toml
 
-# Check configuration syntax plus SMTP and POP3 account connectivity
+# Check configuration syntax, SMTP/POP3 account connectivity, and send test notifications
 ./target/release/mail-forwarder --config /path/to/config.toml --check
 ```
 
-Account checks time out after 30 seconds per SMTP or POP3 account, so one slow server will not block the entire check indefinitely.
+Account and notification checks time out after 30 seconds each, so one slow server will not block the entire check indefinitely. If notification handlers are configured, `--check` sends a test notification through each one.
 
 ## License
 

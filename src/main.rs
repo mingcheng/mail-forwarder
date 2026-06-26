@@ -176,6 +176,13 @@ async fn check_config(config: &AppConfig) -> anyhow::Result<()> {
     )
     .await?;
 
+    notifications::send_test_notifications(
+        &config.notifications,
+        &config.forward_to,
+        Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS),
+    )
+    .await?;
+
     for receiver_config in &config.receivers {
         if receiver_config.protocol == "pop3" {
             info!(
