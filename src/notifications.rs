@@ -96,6 +96,22 @@ impl Notification for TelegramNotification {
         info!("Telegram notification sent for email {}", email.id);
         Ok(())
     }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let message = format!(
+            "Email forwarding failed after all retry attempts.\nID: {}\nTarget: {}\nError: {}",
+            email.id, target_address, error
+        );
+
+        self.send_message(&message).await?;
+        info!("Telegram failure notification sent for email {}", email.id);
+        Ok(())
+    }
 }
 
 /// A notification handler that appends a log entry to a local file.
@@ -149,6 +165,23 @@ impl Notification for FileNotification {
 
         self.append_log_entry(&log_entry).await?;
         info!("File notification written for email {}", email.id);
+        Ok(())
+    }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let log_entry = format!(
+            "[{}] Failed to forward email ID: {} to {} after all retry attempts: {}\n",
+            timestamp, email.id, target_address, error
+        );
+
+        self.append_log_entry(&log_entry).await?;
+        info!("File failure notification written for email {}", email.id);
         Ok(())
     }
 }
@@ -230,6 +263,24 @@ impl Notification for EmailNotification {
         )
         .await?;
         info!("Email notification sent for email {}", email.id);
+        Ok(())
+    }
+
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        self.send_plain_text(
+            format!("Alert: Email {} forwarding failed", email.id),
+            format!(
+                "Email with ID {} could not be forwarded to {} after all retry attempts.\n\nError: {}",
+                email.id, target_address, error
+            ),
+        )
+        .await?;
+        info!("Email failure notification sent for email {}", email.id);
         Ok(())
     }
 }
@@ -440,6 +491,32 @@ mod tests {
 
         let contents = fs::read_to_string(&file_path).await.unwrap();
         assert!(contents.contains("Configuration check test notification for target@example.com"));
+
+        let _ = fs::remove_file(&file_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_file_failure_notification() {
+        let temp_dir = env::temp_dir();
+        let file_path = temp_dir.join("test_failure_notification.log");
+        let file_path_str = file_path.to_str().unwrap().to_string();
+
+        let _ = fs::remove_file(&file_path).await;
+
+        let notification = FileNotification::new(file_path_str.clone());
+        let email = Email {
+            id: "failed-email-123".to_string(),
+            content: vec![],
+        };
+
+        let result = notification
+            .notify_forward_failure(&email, "target@example.com", "smtp unavailable")
+            .await;
+        assert!(result.is_ok());
+
+        let contents = fs::read_to_string(&file_path).await.unwrap();
+        assert!(contents.contains("Failed to forward email ID: failed-email-123"));
+        assert!(contents.contains("smtp unavailable"));
 
         let _ = fs::remove_file(&file_path).await;
     }

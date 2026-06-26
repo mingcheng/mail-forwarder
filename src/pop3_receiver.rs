@@ -173,45 +173,6 @@ impl MailReceiver for Pop3Receiver {
         })
         .await?
     }
-
-    async fn delete_emails(&mut self, ids: &[String]) -> anyhow::Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        let config = self.config.clone();
-        let target_uids = ids.to_vec();
-        let factory = self.factory.clone();
-
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut client = factory.create(&config)?;
-            let list = client.list()?;
-            let target_uids: HashSet<String> = target_uids.into_iter().collect();
-
-            let mut deleted_count = 0;
-            for msg in list {
-                let uid = client
-                    .get_unique_id(msg.message_id)
-                    .unwrap_or_else(|_| msg.message_id.to_string());
-
-                if target_uids.contains(&uid) {
-                    client.delete(msg.message_id)?;
-                    deleted_count += 1;
-                }
-            }
-
-            if deleted_count < target_uids.len() {
-                log::warn!(
-                    "Only deleted {} out of {} requested messages",
-                    deleted_count,
-                    target_uids.len()
-                );
-            }
-
-            Ok(())
-        })
-        .await?
-    }
 }
 
 #[cfg(test)]
@@ -228,7 +189,6 @@ mod pop3_receiver_tests {
             protocol: "pop3".to_string(),
             use_tls: Some(true),
             check_interval_seconds: Some(60),
-            delete_after_forward: Some(false),
             imap_folder: "INBOX".to_string(),
         }
     }
@@ -418,80 +378,6 @@ mod pop3_receiver_tests {
         assert_eq!(emails.len(), 1);
         assert_eq!(emails[0].id, "uid2");
         assert_eq!(emails[0].content, b"email2");
-    }
-
-    #[tokio::test]
-    async fn test_delete_emails_multiple() {
-        let config = get_test_config();
-
-        let mut mock_factory = MockPop3ClientFactory::new();
-        mock_factory.expect_create().returning(|_| {
-            let mut mock_client = MockPop3Client::new();
-
-            mock_client.expect_list().returning(|| {
-                Ok(vec![
-                    Pop3MessageInfo {
-                        message_id: 1,
-                        message_size: 100,
-                    },
-                    Pop3MessageInfo {
-                        message_id: 2,
-                        message_size: 200,
-                    },
-                    Pop3MessageInfo {
-                        message_id: 3,
-                        message_size: 300,
-                    },
-                ])
-            });
-
-            mock_client
-                .expect_get_unique_id()
-                .with(eq(1))
-                .returning(|_| Ok("uid1".to_string()));
-            mock_client
-                .expect_get_unique_id()
-                .with(eq(2))
-                .returning(|_| Ok("uid2".to_string()));
-            mock_client
-                .expect_get_unique_id()
-                .with(eq(3))
-                .returning(|_| Ok("uid3".to_string()));
-
-            // Only uid1 and uid3 are requested for deletion.
-            mock_client
-                .expect_delete()
-                .with(eq(1))
-                .returning(|_| Ok(()));
-            mock_client
-                .expect_delete()
-                .with(eq(3))
-                .returning(|_| Ok(()));
-
-            Ok(Box::new(mock_client))
-        });
-
-        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
-        let ids = vec!["uid1".to_string(), "uid3".to_string()];
-        receiver
-            .delete_emails(&ids)
-            .await
-            .expect("Delete should succeed");
-    }
-
-    #[tokio::test]
-    async fn test_delete_emails_empty_is_noop() {
-        let config = get_test_config();
-
-        // Factory must never be invoked when the id list is empty.
-        let mut mock_factory = MockPop3ClientFactory::new();
-        mock_factory.expect_create().never();
-
-        let mut receiver = Pop3Receiver::new_with_factory(config, Arc::new(mock_factory));
-        receiver
-            .delete_emails(&[])
-            .await
-            .expect("Deleting an empty list should be a no-op");
     }
 
     #[tokio::test]

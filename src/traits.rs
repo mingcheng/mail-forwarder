@@ -28,14 +28,6 @@ pub trait MailReceiver: Send + Sync {
 
     /// Optional: Delete an email after processing
     async fn delete_email(&mut self, id: &str) -> anyhow::Result<()>;
-
-    /// Optional: Delete multiple emails after processing
-    async fn delete_emails(&mut self, ids: &[String]) -> anyhow::Result<()> {
-        for id in ids {
-            self.delete_email(id).await?;
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -48,4 +40,12 @@ pub trait MailSender: Send + Sync {
 pub trait Notification: Send + Sync {
     /// Sends a notification about a successfully forwarded email
     async fn notify(&self, email: &Email, target_address: &str) -> anyhow::Result<()>;
+
+    /// Sends a notification about an email that could not be forwarded.
+    async fn notify_forward_failure(
+        &self,
+        email: &Email,
+        target_address: &str,
+        error: &str,
+    ) -> anyhow::Result<()>;
 }

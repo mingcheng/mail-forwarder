@@ -169,54 +169,6 @@ impl MailReceiver for ImapReceiver {
 
         Ok(())
     }
-
-    async fn delete_emails(&mut self, ids: &[String]) -> anyhow::Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut session = self.connect().await?;
-
-        let mailbox = &self.config.imap_folder;
-        session
-            .select(mailbox)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to select mailbox {}: {}", mailbox, e))?;
-
-        let sequence_set = ids.join(",");
-
-        // Mark the messages as deleted
-        {
-            let store_stream = session
-                .store(sequence_set, "+FLAGS (\\Deleted)")
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to mark messages as deleted: {}", e))?;
-            pin_mut!(store_stream);
-
-            // Consume the stream
-            while store_stream.next().await.is_some() {}
-        }
-
-        // Expunge to permanently delete
-        {
-            let expunge_stream = session
-                .expunge()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to expunge: {}", e))?;
-            pin_mut!(expunge_stream);
-
-            // Consume the stream
-            while expunge_stream.next().await.is_some() {}
-        }
-
-        // Logout
-        session
-            .logout()
-            .await
-            .map_err(|e| anyhow::anyhow!("Logout failed: {}", e))?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -232,7 +184,6 @@ mod imap_receiver_tests {
             protocol: "imap".to_string(),
             use_tls: Some(true),
             check_interval_seconds: Some(60),
-            delete_after_forward: Some(false),
             imap_folder: "INBOX".to_string(),
         }
     }

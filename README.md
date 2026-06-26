@@ -11,16 +11,17 @@ Gmail DOES NOT support POP3 or Gmailify for the forwarding email from third-part
 - TLS/SSL support.
 - Send notifications on successful forwarding via Telegram, file logging, or email.
 - Configurable check intervals (in seconds).
+- Save emails locally before deleting them from the source server, then retry forwarding before sending failure notifications.
 
 ## Run with Docker(recommended)
 
-You can also run the mail forwarder using per-compiled docker image, which is available on GitHub Container Registry:
+You can also run the mail forwarder using the precompiled Docker image, which is available on GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/mingcheng/mail-forwarder
 ```
 
-and suggest run it in the docker compose:
+The recommended Docker Compose configuration is:
 
 ```yaml
 services:
@@ -53,6 +54,11 @@ Create a `config.toml` file with the following content:
 ```toml
 # Destination email address
 forward_to = "target@example.com"
+
+# Optional: local spool used to keep a copy before deleting from the source server.
+local_mail_dir = "mail-forwarder-spool"
+# Optional: number of SMTP forwarding attempts before failure notifications are sent.
+forward_retry_attempts = 3
 
 # Optional: Logging configuration
 # log_level accepts the same syntax as the RUST_LOG environment variable
@@ -96,7 +102,6 @@ username = "source1@gmail.com"
 password = "app_password"
 use_tls = true
 check_interval_seconds = 60
-delete_after_forward = false
 
 # Receiver Example 2: IMAP
 [[receivers]]
@@ -110,13 +115,15 @@ imap_folder = "INBOX"
 check_interval_seconds = 60
 ```
 
-> **Note**: For services like Gmail or Outlook, please use an **App Password** instead of your login password for the security reasons. You can generate an App Password in your email account settings.
+> **Note**: For services like Gmail or Outlook, please use an **App Password** instead of your login password for security reasons. You can generate an App Password in your email account settings.
 
 ### Configuration reference
 
 | Field                                           | Scope     | Required | Default | Description                                                               |
 | ----------------------------------------------- | --------- | -------- | ------- | ------------------------------------------------------------------------- |
 | `forward_to`                                    | top-level | yes      | –       | Destination address that all fetched emails are forwarded to.             |
+| `local_mail_dir`                                | top-level | no       | `mail-forwarder-spool` | Directory used to keep local `.eml` copies before deleting messages from the source server. |
+| `forward_retry_attempts`                        | top-level | no       | `3`     | SMTP forwarding attempts before failure notifications are sent. Values below `1` are treated as `1`. |
 | `log_level`                                     | top-level | no       | `info`  | Log verbosity, using `RUST_LOG` syntax. Overrides the `RUST_LOG` env var. |
 | `log_file`                                      | top-level | no       | –       | Path to a log file; logs are written there in addition to stderr.         |
 | `quiet`                                         | top-level | no       | `false` | Suppress stderr output (only the log file is written, if configured).     |
@@ -128,10 +135,9 @@ check_interval_seconds = 60
 | `receivers[].username` / `receivers[].password` | receiver  | yes      | –       | Source account credentials.                                               |
 | `receivers[].use_tls`                           | receiver  | no       | `true`  | Use a TLS connection to the source server.                                |
 | `receivers[].check_interval_seconds`            | receiver  | no       | `300`   | Poll interval in seconds (minimum enforced value is `10`).                |
-| `receivers[].delete_after_forward`              | receiver  | no       | `false` | Delete emails from the source server after a successful forward.          |
 | `receivers[].imap_folder`                       | receiver  | no       | `INBOX` | IMAP mailbox to monitor (ignored for POP3).                               |
 
-> **Note**: When `delete_after_forward` is `false`, forwarded message IDs are tracked in memory only. For POP3, restarting the program may re-forward existing messages; IMAP avoids this by fetching only `UNSEEN` messages.
+> **Note**: Each fetched message is first written to `local_mail_dir`, then deleted from the source server, then forwarded. If all forwarding attempts fail, failure notifications are sent and the local `.eml` copy is retained for manual recovery. If source deletion fails, forwarding still continues and the local copy is kept as a recovery trail.
 
 ## Usage
 

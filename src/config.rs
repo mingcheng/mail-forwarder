@@ -22,6 +22,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub notifications: Vec<NotificationConfig>,
     pub forward_to: String,
+    #[serde(default = "default_local_mail_dir")]
+    pub local_mail_dir: String,
+    #[serde(default = "default_forward_retry_attempts")]
+    pub forward_retry_attempts: u32,
     pub log_file: Option<String>,
     pub log_level: Option<String>,
     #[serde(default)]
@@ -38,7 +42,6 @@ pub struct ReceiverConfig {
     pub protocol: String, // "pop3" or "imap"
     pub use_tls: Option<bool>,
     pub check_interval_seconds: Option<u64>,
-    pub delete_after_forward: Option<bool>,
     #[serde(default = "default_imap_folder")]
     pub imap_folder: String, // IMAP mailbox folder, default "INBOX"
 }
@@ -51,6 +54,14 @@ fn default_protocol() -> String {
 // Default IMAP folder is "INBOX"
 fn default_imap_folder() -> String {
     "INBOX".to_string()
+}
+
+fn default_local_mail_dir() -> String {
+    "mail-forwarder-spool".to_string()
+}
+
+fn default_forward_retry_attempts() -> u32 {
+    3
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -125,7 +136,6 @@ mod tests {
             password = "receiver_pass"
             protocol = "pop3"
             use_tls = true
-            delete_after_forward = false
         "#;
 
         let config: AppConfig = Config::builder()
@@ -144,7 +154,6 @@ mod tests {
         let receiver = &config.receivers[0];
         assert_eq!(receiver.host, "pop.example.com");
         assert!(receiver.use_tls.unwrap_or(true));
-        assert_eq!(receiver.delete_after_forward, Some(false));
     }
 
     #[test]
@@ -288,6 +297,8 @@ mod tests {
         let receiver = &config.receivers[0];
         assert_eq!(receiver.protocol, "pop3");
         assert_eq!(receiver.imap_folder, "INBOX");
+        assert_eq!(config.local_mail_dir, "mail-forwarder-spool");
+        assert_eq!(config.forward_retry_attempts, 3);
         assert!(!config.quiet);
         assert!(config.notifications.is_empty());
     }
