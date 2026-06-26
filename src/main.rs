@@ -9,7 +9,7 @@
  * File Created: 2026-02-12 15:38:23
  *
  * Modified By: mingcheng <mingcheng@apache.org>
- * Last Modified: 2026-03-06 17:57:59
+ * Last Modified: 2026-06-25 15:34:27
  */
 
 mod config;
@@ -27,13 +27,17 @@ use pop3_receiver::Pop3Receiver;
 use rustls::crypto;
 use smtp_sender::SmtpSender;
 use std::collections::HashSet;
+use std::future::Future;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
 use tokio::signal;
 use tokio::sync::broadcast;
 use traits::{MailReceiver, MailSender, Notification};
 
+const ACCOUNT_CHECK_TIMEOUT_SECONDS: u64 = 30;
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> anyhow::Result<&'static str> {
     let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
@@ -98,8 +102,11 @@ impl Write for MultiWriter {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(short, long)]
+    #[arg(short, long, help = "Path to the configuration file")]
     config: Option<String>,
+
+    #[arg(long, help = "Check the configuration file and account connections")]
+    check: bool,
 }
 
 // Initializes the logger based on the provided configuration.
@@ -139,6 +146,59 @@ fn initialize_logger(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn check_account_with_timeout<F>(label: &str, check: F) -> anyhow::Result<()>
+where
+    F: Future<Output = anyhow::Result<()>>,
+{
+    match tokio::time::timeout(Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS), check).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(anyhow::anyhow!("{} check failed: {}", label, e)),
+        Err(_) => Err(anyhow::anyhow!(
+            "{} check timed out after {} seconds",
+            label,
+            ACCOUNT_CHECK_TIMEOUT_SECONDS
+        )),
+    }
+}
+
+async fn check_config(config: &AppConfig) -> anyhow::Result<()> {
+    config
+        .forward_to
+        .parse::<lettre::Address>()
+        .map_err(|e| anyhow::anyhow!("Invalid forward_to address: {}", e))?;
+
+    info!("Checking SMTP sender account {}", config.sender.username);
+    let sender = SmtpSender::new(config.sender.clone());
+    check_account_with_timeout("SMTP sender account", sender.check_connection()).await?;
+
+    notifications::check_email_notification_accounts(
+        &config.notifications,
+        Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS),
+    )
+    .await?;
+
+    notifications::send_test_notifications(
+        &config.notifications,
+        &config.forward_to,
+        Duration::from_secs(ACCOUNT_CHECK_TIMEOUT_SECONDS),
+    )
+    .await?;
+
+    for receiver_config in &config.receivers {
+        if receiver_config.protocol == "pop3" {
+            info!(
+                "Checking POP3 receiver account {} at {}:{}",
+                receiver_config.username, receiver_config.host, receiver_config.port
+            );
+            let receiver = Pop3Receiver::new(receiver_config.clone());
+            let label = format!("POP3 receiver account {}", receiver_config.username);
+            check_account_with_timeout(&label, receiver.check_connection()).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Context required for processing a batch of fetched emails.
 /// This struct groups together all the necessary dependencies and state
 /// to avoid passing too many arguments to the `process_emails` function.
@@ -149,95 +209,184 @@ struct ProcessContext<'a> {
     sender: &'a SmtpSender,
     /// The target email address to forward to.
     forward_to: &'a str,
-    /// The receiver instance, used to delete emails from the server if configured.
+    /// The receiver instance, used to delete emails from the server after local save.
     receiver: &'a mut dyn MailReceiver,
     /// A set of email IDs that have already been processed, to prevent duplicate processing.
     seen_ids: &'a mut HashSet<String>,
-    /// Whether to delete emails from the source server after successful forwarding.
-    delete_after_forward: bool,
+    /// Directory used to keep local copies before deleting from the source server.
+    local_mail_dir: &'a str,
+    /// Number of SMTP forwarding attempts before failure notifications are sent.
+    forward_retry_attempts: u32,
     /// A list of notification handlers to trigger after successful processing.
     notifications: &'a [Box<dyn Notification>],
+}
+
+fn safe_path_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => c,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn local_email_path(local_mail_dir: &str, username: &str, email_id: &str) -> PathBuf {
+    PathBuf::from(local_mail_dir)
+        .join(safe_path_segment(username))
+        .join(format!("{}.eml", safe_path_segment(email_id)))
+}
+
+async fn save_email_locally(
+    local_mail_dir: &str,
+    username: &str,
+    email: &traits::Email,
+) -> anyhow::Result<PathBuf> {
+    let path = local_email_path(local_mail_dir, username, &email.id);
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid local mail path {}", path.display()))?;
+
+    fs::create_dir_all(parent).await?;
+
+    let temporary_path = path.with_extension("eml.tmp");
+    fs::write(&temporary_path, &email.content).await?;
+    fs::rename(&temporary_path, &path).await?;
+
+    Ok(path)
+}
+
+async fn send_email_with_retry(
+    sender: &SmtpSender,
+    email: &traits::Email,
+    forward_to: &str,
+    attempts: u32,
+) -> Result<(), anyhow::Error> {
+    let attempts = attempts.max(1);
+    let mut last_error = None;
+
+    for attempt in 1..=attempts {
+        match sender.send_email(email, forward_to).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                error!(
+                    "Failed to forward email {} on attempt {}/{}: {:?}",
+                    email.id, attempt, attempts, e
+                );
+                last_error = Some(e);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Forwarding was not attempted")))
+}
+
+async fn notify_forward_failure(ctx: &ProcessContext<'_>, email: &traits::Email, error: &str) {
+    for notification in ctx.notifications {
+        if let Err(e) = notification
+            .notify_forward_failure(email, ctx.forward_to, error)
+            .await
+        {
+            error!(
+                "[{}] Failed to send failure notification for email {}: {:?}",
+                ctx.username, email.id, e
+            );
+        }
+    }
 }
 
 /// Processes a batch of fetched emails.
 ///
 /// This function handles the core logic of:
-/// 1. Forwarding each new email via SMTP.
-/// 2. Tracking successfully forwarded emails.
-/// 3. Deleting successfully forwarded emails from the source server (if configured).
-/// 4. Triggering notifications for successfully processed emails.
+/// 1. Saving each new email locally.
+/// 2. Deleting saved emails from the source server.
+/// 3. Forwarding local copies with retry.
+/// 4. Triggering success or failure notifications.
 async fn process_emails(ctx: &mut ProcessContext<'_>, emails: Vec<traits::Email>) {
-    let mut to_delete = Vec::new();
-    let mut successfully_processed = Vec::new();
-
-    // Step 1 & 2: Forward emails and track successes
     for email in emails {
-        // Skip if we've already seen this email ID in the current session
         if ctx.seen_ids.contains(&email.id) {
             continue;
         }
 
         info!("[{}] Processing new email ID: {}", ctx.username, email.id);
 
-        // Attempt to forward the email. If successful, mark it for deletion and notification.
-        match ctx.sender.send_email(&email, ctx.forward_to).await {
-            Ok(_) => {
+        let local_path = match save_email_locally(ctx.local_mail_dir, ctx.username, &email).await {
+            Ok(path) => path,
+            Err(e) => {
+                error!(
+                    "[{}] Failed to save email {} locally, leaving it on the source server: {:?}",
+                    ctx.username, email.id, e
+                );
+                continue;
+            }
+        };
+
+        ctx.seen_ids.insert(email.id.clone());
+
+        let mut source_delete_failed = false;
+        match ctx.receiver.delete_email(&email.id).await {
+            Ok(()) => info!(
+                "[{}] Deleted email {} from source server after local save",
+                ctx.username, email.id
+            ),
+            Err(e) => {
+                error!(
+                    "[{}] Failed to delete email {} from source server after local save: {:?}",
+                    ctx.username, email.id, e
+                );
+                source_delete_failed = true;
+            }
+        }
+
+        match send_email_with_retry(
+            ctx.sender,
+            &email,
+            ctx.forward_to,
+            ctx.forward_retry_attempts,
+        )
+        .await
+        {
+            Ok(()) => {
                 info!(
                     "[{}] Successfully forwarded email {}",
                     ctx.username, email.id
                 );
-                // Mark as seen to avoid reprocessing
-                ctx.seen_ids.insert(email.id.clone());
-                // Queue for deletion if forwarding succeeded
-                to_delete.push(email.id.clone());
-                // Queue for notification
-                successfully_processed.push(email);
-            }
-            Err(e) => {
-                error!(
-                    "[{}] Failed to forward email {}: {:?}",
-                    ctx.username, email.id, e
-                );
-            }
-        }
-    }
-
-    // Step 3: Delete emails from the source server if configured
-    let notify_emails = if ctx.delete_after_forward && !to_delete.is_empty() {
-        match ctx.receiver.delete_emails(&to_delete).await {
-            Ok(_) => {
-                info!(
-                    "[{}] Successfully deleted {} emails from server",
-                    ctx.username,
-                    to_delete.len()
-                );
-                // Remove deleted emails from seen_ids to prevent memory leaks over time
-                for id in &to_delete {
-                    ctx.seen_ids.remove(id);
+                if source_delete_failed {
+                    warn!(
+                        "[{}] Keeping local copy {} because source deletion failed before forwarding",
+                        ctx.username,
+                        local_path.display()
+                    );
+                } else {
+                    if let Err(e) = fs::remove_file(&local_path).await {
+                        warn!(
+                            "[{}] Failed to remove local copy {} after successful forwarding: {:?}",
+                            ctx.username,
+                            local_path.display(),
+                            e
+                        );
+                    }
                 }
-                // Only notify if deletion also succeeded
-                successfully_processed
+
+                for notification in ctx.notifications {
+                    if let Err(e) = notification.notify(&email, ctx.forward_to).await {
+                        error!(
+                            "[{}] Failed to send notification for email {}: {:?}",
+                            ctx.username, email.id, e
+                        );
+                    }
+                }
             }
             Err(e) => {
-                error!("[{}] Failed to delete emails: {:?}", ctx.username, e);
-                // Skip notifications if deletion fails, to avoid false positives
-                // or duplicate notifications if the email is fetched again later.
-                Vec::new()
-            }
-        }
-    } else {
-        // If deletion is not configured, notify for all successfully forwarded emails
-        successfully_processed
-    };
-
-    // Step 4: Trigger notifications
-    for email in notify_emails {
-        for notification in ctx.notifications {
-            if let Err(e) = notification.notify(&email, ctx.forward_to).await {
                 error!(
-                    "[{}] Failed to send notification for email {}: {:?}",
-                    ctx.username, email.id, e
+                    "[{}] Failed to forward email {} after {} attempts; local copy retained at {}: {:?}",
+                    ctx.username,
+                    email.id,
+                    ctx.forward_retry_attempts.max(1),
+                    local_path.display(),
+                    e
                 );
+                notify_forward_failure(ctx, &email, &e.to_string()).await;
             }
         }
     }
@@ -251,6 +400,8 @@ async fn run_receiver_task(
     receiver_config: ReceiverConfig,
     sender: Arc<SmtpSender>,
     forward_to: String,
+    local_mail_dir: String,
+    forward_retry_attempts: u32,
     notifications: Arc<Vec<Box<dyn Notification>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
@@ -266,19 +417,21 @@ async fn run_receiver_task(
         host, receiver_config.port, username, receiver_config.protocol, interval_seconds
     );
 
-    #[allow(clippy::wildcard_in_or_patterns)]
     let mut receiver: Box<dyn MailReceiver> = match receiver_config.protocol.as_str() {
         "imap" => Box::new(ImapReceiver::new(receiver_config.clone())),
-        "pop3" | _ => Box::new(Pop3Receiver::new(receiver_config.clone())),
+        "pop3" => Box::new(Pop3Receiver::new(receiver_config.clone())),
+        protocol => {
+            warn!(
+                "Unknown receiver protocol '{}'; falling back to POP3",
+                protocol
+            );
+            Box::new(Pop3Receiver::new(receiver_config.clone()))
+        }
     };
 
-    // Note: For POP3, if delete_after_forward is false, restarting the program
-    // will cause all existing emails to be forwarded again because seen_ids is not persisted.
-    // For IMAP, it only fetches UNSEEN emails, so it's less of an issue.
-    // Also, if delete_after_forward is false, seen_ids will grow indefinitely,
-    // which could be a memory leak for long-running processes with many emails.
+    // Messages are saved locally before deletion from the source server. If source deletion fails,
+    // the local copy is retained after forwarding so the operator has a recovery trail.
     let mut seen_ids: HashSet<String> = HashSet::new();
-    let delete_after_forward = receiver_config.delete_after_forward.unwrap_or(false);
 
     let mut ticker = tokio::time::interval(Duration::from_secs(interval_seconds));
     ticker.tick().await;
@@ -308,7 +461,8 @@ async fn run_receiver_task(
                     forward_to: &forward_to,
                     receiver: receiver.as_mut(),
                     seen_ids: &mut seen_ids,
-                    delete_after_forward,
+                    local_mail_dir: &local_mail_dir,
+                    forward_retry_attempts,
                     notifications: &notifications,
                 };
                 process_emails(&mut ctx, emails).await;
@@ -342,6 +496,19 @@ async fn main() -> anyhow::Result<()> {
 
     initialize_logger(&config)?;
 
+    if args.check {
+        match check_config(&config).await {
+            Ok(()) => {
+                println!("Configuration file and account checks passed.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Configuration check failed: {:?}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     info!("Starting Mail Forwarder...");
     info!("Forwarding to: {}", config.forward_to);
 
@@ -353,6 +520,8 @@ async fn main() -> anyhow::Result<()> {
     for receiver_config in config.receivers {
         let sender = sender.clone();
         let forward_to = config.forward_to.clone();
+        let local_mail_dir = config.local_mail_dir.clone();
+        let forward_retry_attempts = config.forward_retry_attempts.max(1);
         let notifications = notifications.clone();
         let shutdown_rx = shutdown_tx.subscribe();
 
@@ -361,6 +530,8 @@ async fn main() -> anyhow::Result<()> {
                 receiver_config,
                 sender,
                 forward_to,
+                local_mail_dir,
+                forward_retry_attempts,
                 notifications,
                 shutdown_rx,
             )

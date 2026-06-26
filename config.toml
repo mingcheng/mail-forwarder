@@ -1,5 +1,7 @@
 # General Settings
 forward_to = "destination@example.com"
+local_mail_dir = "mail-forwarder-spool"
+forward_retry_attempts = 3
 
 [[notifications]]
 type = "telegram"
@@ -28,7 +30,6 @@ protocol = "pop3"                 # Protocol: "pop3" or "imap"
 use_tls = true
 check_interval_seconds = 30       # specific interval for this account
 # proxy = "127.0.0.1:1080" # Optional SOCKS5 proxy
-delete_after_forward = true # Optional: delete email after successful forward
 
 # Receiver Settings (IMAP)
 [[receivers]]
@@ -40,7 +41,6 @@ protocol = "imap"                 # Use IMAP protocol
 use_tls = true
 imap_folder = "INBOX"             # IMAP mailbox folder to monitor
 check_interval_seconds = 30
-delete_after_forward = false
 
 [[receivers]]
 host = "pop.sina.com"
